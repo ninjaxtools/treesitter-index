@@ -23,9 +23,13 @@ using regular-expression filtering across multiple files.
 
 ## Usage
 
-```text
-treesitter-index [OPTIONS] [PATH]...
+Put this instruction in your AGENTS.md
+
 ```
+- When analyzing source files, prefer running `treesitter-index -g <glob> <files or directories...>` early to obtain a compact structural skeleton before reading the full file, and then perform targeted reads for implementation details. Line numbers are indicated in square brackets (e.g [5] means line 5, and [5-10] means lines 5 to 10). To filter for specific symbols us '-e', for example to search for classes or functions containing 'manager' or 'main' (-i for ignore case): `treesitter-index -g "*.ts" -i -e "manager|main" src`. Don't use '*' as the glob since that circumvents the default ignore rules.
+```
+
+### Examples
 
 Index one file:
 
@@ -37,12 +41,6 @@ Index a directory recursively, restricting the input to Rust files:
 
 ```sh
 treesitter-index -g '*.rs' src
-```
-
-Read TypeScript from standard input:
-
-```sh
-cat example.ts | treesitter-index --type typescript
 ```
 
 Show only top-level classes or functions whose names match a regular
