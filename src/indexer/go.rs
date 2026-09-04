@@ -2,7 +2,7 @@ use tree_sitter::Node;
 
 use super::{
     Entry, Section, compact_whitespace, find_child, new_entry, new_import_entry, new_symbol_entry,
-    node_text, ranged_child, truncate, truncate_child_count,
+    new_symbols_entry, node_text, ranged_child, truncate, truncate_child_count,
 };
 
 const TYPE_LIMIT: usize = 60;
@@ -22,9 +22,10 @@ pub(super) fn extract(node: Node<'_>, source: &[u8], _attrs: &[String]) -> Vec<E
 
 fn extract_package(node: Node<'_>, source: &[u8]) -> Option<Entry> {
     let name = find_child(node, "package_identifier")?;
-    Some(new_entry(
+    Some(new_symbol_entry(
         Section::Module,
         node,
+        node_text(name, source).to_owned(),
         node_text(name, source).to_owned(),
     ))
 }
@@ -86,9 +87,10 @@ fn extract_values(node: Node<'_>, source: &[u8], is_var: bool) -> Vec<Entry> {
                 text.push(' ');
                 text.push_str(node_text(value_type, source));
             }
-            Some(new_entry(
+            Some(new_symbols_entry(
                 Section::Constant,
                 spec,
+                names,
                 compact_whitespace(&text),
             ))
         })
@@ -114,9 +116,10 @@ fn extract_types(node: Node<'_>, source: &[u8]) -> Vec<Entry> {
 fn extract_type_alias(node: Node<'_>, source: &[u8]) -> Option<Entry> {
     let name = node.child_by_field_name("name")?;
     let value = node.child_by_field_name("type")?;
-    Some(new_entry(
+    Some(new_symbol_entry(
         Section::Type,
         node,
+        node_text(name, source).to_owned(),
         compact_whitespace(&format!(
             "type {} = {}",
             node_text(name, source),
@@ -128,12 +131,13 @@ fn extract_type_alias(node: Node<'_>, source: &[u8]) -> Option<Entry> {
 fn extract_type_spec(node: Node<'_>, source: &[u8]) -> Option<Entry> {
     let name = node.child_by_field_name("name")?;
     let value = node.child_by_field_name("type")?;
-    let mut name = node_text(name, source).to_owned();
+    let symbol_name = node_text(name, source).to_owned();
+    let mut name = symbol_name.clone();
     if let Some(parameters) = node.child_by_field_name("type_parameters") {
         name.push_str(node_text(parameters, source));
     }
 
-    match value.kind() {
+    let mut entry = match value.kind() {
         "struct_type" => Some(extract_struct(node, value, source, &name)),
         "interface_type" => Some(extract_interface(node, value, source, &name)),
         _ => {
@@ -144,7 +148,9 @@ fn extract_type_spec(node: Node<'_>, source: &[u8]) -> Option<Entry> {
                 format!("{name} {}", truncate(&value, TYPE_LIMIT)),
             ))
         }
-    }
+    }?;
+    entry.symbol_names.push(symbol_name);
+    Some(entry)
 }
 
 fn extract_struct(
@@ -224,6 +230,7 @@ fn extract_function(node: Node<'_>, source: &[u8]) -> Option<Entry> {
 }
 
 fn extract_method(node: Node<'_>, source: &[u8]) -> Option<Entry> {
+    let name = node.child_by_field_name("name")?;
     let receiver = node
         .child_by_field_name("receiver")
         .map(|receiver| node_text(receiver, source));
@@ -231,7 +238,12 @@ fn extract_method(node: Node<'_>, source: &[u8]) -> Option<Entry> {
     let text = receiver.map_or(signature.clone(), |receiver| {
         format!("{receiver} {signature}")
     });
-    Some(new_entry(Section::Impl, node, compact_whitespace(&text)))
+    Some(new_symbol_entry(
+        Section::Impl,
+        node,
+        node_text(name, source).to_owned(),
+        compact_whitespace(&text),
+    ))
 }
 
 fn signature(node: Node<'_>, source: &[u8]) -> Option<String> {
@@ -255,6 +267,7 @@ fn signature(node: Node<'_>, source: &[u8]) -> Option<String> {
 fn field_texts(node: Node<'_>, field: &str, source: &[u8]) -> Vec<String> {
     let mut cursor = node.walk();
     node.children_by_field_name(field, &mut cursor)
+        .filter(|child| child.is_named())
         .map(|child| node_text(child, source).to_owned())
         .collect()
 }

@@ -111,7 +111,7 @@ enum ChildStyle {
 
 struct Entry {
     section: Section,
-    symbol_name: Option<String>,
+    symbol_names: Vec<String>,
     line_start: usize,
     line_end: usize,
     text: String,
@@ -145,13 +145,31 @@ pub fn skeleton_matching(
     source: &[u8],
     regexps: &[Regex],
 ) -> String {
+    skeleton_matching_imports(language, root, source, regexps, false)
+}
+
+pub fn skeleton_matching_imports(
+    language: SourceLanguage,
+    root: Node<'_>,
+    source: &[u8],
+    regexps: &[Regex],
+    match_imports: bool,
+) -> String {
     let mut extracted = extract(language, root, source);
     if !regexps.is_empty() {
+        let import_separator = extracted.import_separator;
         extracted.entries.retain_mut(|entry| {
-            let entry_matches = entry
-                .symbol_name
-                .as_deref()
-                .is_some_and(|name| regexps.iter().any(|regexp| regexp.is_match(name)));
+            if entry.section == Section::Import {
+                if !match_imports {
+                    return false;
+                }
+                entry
+                    .import_paths
+                    .retain(|path| import_path_matches(path, import_separator, regexps));
+                return !entry.import_paths.is_empty();
+            }
+
+            let entry_matches = names_match(&entry.symbol_names, regexps);
             if entry.section == Section::Class {
                 entry.children.retain(|child| {
                     child
@@ -161,13 +179,34 @@ pub fn skeleton_matching(
                 });
                 entry_matches || !entry.children.is_empty()
             } else {
-                matches!(entry.section, Section::Function | Section::Heading) && entry_matches
+                entry.children.clear();
+                entry_matches
             }
         });
         extracted.module_doc = None;
         extracted.test_lines.clear();
     }
     render_skeleton(&extracted)
+}
+
+fn names_match(names: &[String], regexps: &[Regex]) -> bool {
+    names
+        .iter()
+        .any(|name| regexps.iter().any(|regexp| regexp.is_match(name)))
+}
+
+fn import_path_matches(path: &[String], separator: &str, regexps: &[Regex]) -> bool {
+    let full_path = path.join(separator);
+    regexps.iter().any(|regexp| regexp.is_match(&full_path))
+        || path.iter().any(|part| {
+            regexps.iter().any(|regexp| regexp.is_match(part))
+                || part
+                    .split(|character: char| {
+                        !character.is_alphanumeric() && character != '_' && character != '$'
+                    })
+                    .filter(|name| !name.is_empty())
+                    .any(|name| regexps.iter().any(|regexp| regexp.is_match(name)))
+        })
 }
 
 fn extract(language: SourceLanguage, root: Node<'_>, source: &[u8]) -> Extracted {
@@ -543,7 +582,7 @@ impl ImportTrie {
 fn new_entry(section: Section, node: Node<'_>, text: String) -> Entry {
     Entry {
         section,
-        symbol_name: None,
+        symbol_names: Vec::new(),
         line_start: line_start(node),
         line_end: line_end(node),
         text,
@@ -557,7 +596,18 @@ fn new_entry(section: Section, node: Node<'_>, text: String) -> Entry {
 
 fn new_symbol_entry(section: Section, node: Node<'_>, symbol_name: String, text: String) -> Entry {
     let mut entry = new_entry(section, node, text);
-    entry.symbol_name = Some(symbol_name);
+    entry.symbol_names.push(symbol_name);
+    entry
+}
+
+fn new_symbols_entry(
+    section: Section,
+    node: Node<'_>,
+    symbol_names: Vec<String>,
+    text: String,
+) -> Entry {
+    let mut entry = new_entry(section, node, text);
+    entry.symbol_names = symbol_names;
     entry
 }
 
@@ -669,6 +719,16 @@ mod tests {
         patterns: &[&str],
         case_insensitive: bool,
     ) -> String {
+        index_matching_with_options(language, source, patterns, case_insensitive, false)
+    }
+
+    fn index_matching_with_options(
+        language: SourceLanguage,
+        source: &str,
+        patterns: &[&str],
+        case_insensitive: bool,
+        match_imports: bool,
+    ) -> String {
         let mut parser = Parser::new();
         parser.set_language(&language.grammar()).unwrap();
         let tree = parser.parse(source, None).unwrap();
@@ -681,7 +741,13 @@ mod tests {
                     .unwrap()
             })
             .collect();
-        skeleton_matching(language, tree.root_node(), source.as_bytes(), &patterns)
+        skeleton_matching_imports(
+            language,
+            tree.root_node(),
+            source.as_bytes(),
+            &patterns,
+            match_imports,
+        )
     }
 
     #[test]
@@ -787,7 +853,7 @@ mod tests {
             &["^Load.*$"],
         );
         assert!(go.contains("LoadData()"));
-        assert!(!go.contains("Service"));
+        assert!(go.contains("(Service) Load()"));
         assert!(!go.contains("Ignore"));
 
         let java = index_matching(
@@ -798,8 +864,134 @@ mod tests {
         assert!(java.contains("class Service"));
         assert!(!java.contains("void run()"));
         assert!(java.contains("record Point(int x, int y)"));
-        assert!(!java.contains("ServiceShape"));
+        assert!(java.contains("interface ServiceShape"));
         assert!(!java.contains("Ignore"));
+    }
+
+    #[test]
+    fn matches_all_named_top_level_entities() {
+        let python = index_matching(
+            SourceLanguage::Python,
+            "VALUE = 1\ntype Result[T] = tuple[T]\n",
+            &["^VALUE$", "^Result$"],
+        );
+        assert!(python.contains("VALUE = 1"));
+        assert!(python.contains("type Result[T]"));
+
+        let typescript = index_matching(
+            SourceLanguage::TypeScript,
+            "namespace Api {}\ninterface Shape {}\ntype Id = string;\nenum Kind { One }\nconst { source: local, shorthand, ...rest } = value;\n",
+            &[
+                "^Api$",
+                "^Shape$",
+                "^Id$",
+                "^Kind$",
+                "^local$",
+                "^shorthand$",
+                "^rest$",
+            ],
+        );
+        assert!(typescript.contains("namespace Api"));
+        assert!(typescript.contains("interface Shape"));
+        assert!(typescript.contains("type Id"));
+        assert!(typescript.contains("enum Kind"));
+        assert!(typescript.contains("source: local"));
+        assert!(
+            index_matching(
+                SourceLanguage::TypeScript,
+                "const { source: local } = value;",
+                &["^source$"]
+            )
+            .is_empty()
+        );
+
+        let rust = index_matching(
+            SourceLanguage::Rust,
+            "mod api;\nconst LIMIT: usize = 1;\ntype Alias = String;\nstruct Record;\ntrait Service {}\nimpl Service for Record {}\nmacro_rules! build { () => {} }\n",
+            &[
+                "^api$",
+                "^LIMIT$",
+                "^Alias$",
+                "^Record$",
+                "^Service$",
+                "^build$",
+            ],
+        );
+        assert!(rust.contains("mod:"));
+        assert!(rust.contains("LIMIT: usize"));
+        assert!(rust.contains("type Alias"));
+        assert!(rust.contains("struct Record"));
+        assert!(rust.contains("traits:"));
+        assert!(rust.contains("Service for Record"));
+        assert!(rust.contains("build!"));
+
+        let go = index_matching(
+            SourceLanguage::Go,
+            "package demo\nconst A, B = 1, 2\nvar Current string\ntype Alias = string\ntype Box[T any] struct{}\ntype Worker struct{}\nfunc (Worker) Run() {}\n",
+            &["^demo$", "^B$", "^Current$", "^Alias$", "^Box$", "^Run$"],
+        );
+        assert!(go.contains("mod:"));
+        assert!(go.contains("A, B"));
+        assert!(go.contains("var Current string"));
+        assert!(go.contains("type Alias = string"));
+        assert!(go.contains("struct Box[T any]"));
+        assert!(go.contains("(Worker) Run()"));
+
+        let java = index_matching(
+            SourceLanguage::Java,
+            "package com.example;\ninterface Service {}\nenum Kind { ONE }\n@interface Marker {}\n",
+            &["^com\\.example$", "^Service$", "^Kind$", "^Marker$"],
+        );
+        assert!(java.contains("com.example"));
+        assert!(java.contains("interface Service"));
+        assert!(java.contains("enum Kind"));
+        assert!(java.contains("@interface Marker"));
+    }
+
+    #[test]
+    fn imports_only_match_when_requested() {
+        let source = "import os\nfrom package import Service as Alias\n";
+        assert!(index_matching(SourceLanguage::Python, source, &["^Alias$"]).is_empty());
+        let python =
+            index_matching_with_options(SourceLanguage::Python, source, &["^Alias$"], false, true);
+        assert!(python.contains("package.Service as Alias"));
+        assert!(!python.contains("os"));
+
+        let typescript = index_matching_with_options(
+            SourceLanguage::TypeScript,
+            "import { Service as Alias } from './service';\n",
+            &["^Alias$"],
+            false,
+            true,
+        );
+        assert!(typescript.contains("Service as Alias"));
+
+        let rust = index_matching_with_options(
+            SourceLanguage::Rust,
+            "use crate::service::Service as Alias;\n",
+            &["^Alias$"],
+            false,
+            true,
+        );
+        assert!(rust.contains("crate::service::Service as Alias"));
+
+        let go = index_matching_with_options(
+            SourceLanguage::Go,
+            "package main\nimport \"example.com/log\"\n",
+            &["^log$"],
+            false,
+            true,
+        );
+        assert!(go.contains("example.com/log"));
+
+        let java = index_matching_with_options(
+            SourceLanguage::Java,
+            "import static java.util.Collections.emptyList;\n",
+            &["^emptyList$"],
+            false,
+            true,
+        );
+        assert!(java.contains("emptyList"));
     }
 
     #[test]

@@ -1,8 +1,8 @@
 use tree_sitter::Node;
 
 use super::{
-    Entry, Section, compact_whitespace, find_child, new_entry, new_import_entry, new_symbol_entry,
-    node_text, ranged_child, ranged_symbol_child, symbol_child, truncate, truncate_child_count,
+    Entry, Section, compact_whitespace, find_child, new_import_entry, new_symbol_entry, node_text,
+    ranged_child, ranged_symbol_child, symbol_child, truncate, truncate_child_count,
 };
 
 const SIGNATURE_LIMIT: usize = 160;
@@ -222,8 +222,14 @@ fn function_signature(node: Node<'_>, source: &[u8]) -> Option<String> {
 
 fn extract_constant_statement(node: Node<'_>, source: &[u8]) -> Option<Entry> {
     let assignment = assignment_child(node)?;
+    let name = assignment.child_by_field_name("left")?;
     let text = assignment_text(assignment, source, false, true)?;
-    Some(new_entry(Section::Constant, assignment, text))
+    Some(new_symbol_entry(
+        Section::Constant,
+        assignment,
+        node_text(name, source).to_owned(),
+        text,
+    ))
 }
 
 fn assignment_child(node: Node<'_>) -> Option<Node<'_>> {
@@ -270,11 +276,22 @@ fn assignment_text(
 }
 
 fn extract_type_alias(node: Node<'_>, source: &[u8], range_node: Node<'_>) -> Option<Entry> {
-    Some(new_entry(
+    let left = node.child_by_field_name("left")?;
+    Some(new_symbol_entry(
         Section::Type,
         range_node,
+        first_identifier(left, source)?,
         type_alias_text(node, source)?,
     ))
+}
+
+fn first_identifier(node: Node<'_>, source: &[u8]) -> Option<String> {
+    if node.kind() == "identifier" {
+        return Some(node_text(node, source).to_owned());
+    }
+    let mut cursor = node.walk();
+    node.named_children(&mut cursor)
+        .find_map(|child| first_identifier(child, source))
 }
 
 fn type_alias_text(node: Node<'_>, source: &[u8]) -> Option<String> {

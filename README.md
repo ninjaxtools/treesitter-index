@@ -25,7 +25,7 @@ cargo install --path .
 Put this instruction in your AGENTS.md
 
 ```
-- When analyzing source files, prefer running `treesitter-index -g <glob> <files or directories...>` early to obtain a compact structural skeleton before reading the full file, and then perform targeted reads for implementation details. Line numbers are indicated in square brackets (e.g [5] means line 5, and [5-10] means lines 5 to 10). To filter for specific symbols us '-e', for example to search for classes or functions containing 'manager' or 'main' (-i for ignore case): `treesitter-index -g "*.ts" -i -e "manager|main" src`. Don't use '*' as the glob since that circumvents the default ignore rules.
+- When analyzing source files, prefer running `treesitter-index -g <glob> <files or directories...>` early to obtain a compact structural skeleton before reading the full file, and then perform targeted reads for implementation details. Line numbers are indicated in square brackets (e.g [5] means line 5, and [5-10] means lines 5 to 10). To filter for specific top-level symbols, use `-e`, for example: `treesitter-index -g "*.ts" -i -e "manager|main" src`. Add `--match-imports` to include matching imports. Don't use `*` as the glob since that circumvents the default ignore rules.
 ```
 
 ### Skill file
@@ -46,7 +46,7 @@ Index a directory recursively, only rust files:
 treesitter-index -g '*.rs' src
 ```
 
-Filter for top-level symbols (i.e. classes, functions, markdown headings):
+Filter for top-level symbols (i.e. classes, class methods, functions, markdown headings):
 
 ```sh
 treesitter-index -i -e 'manager|main' src
@@ -66,7 +66,8 @@ treesitter-index --format sexp src/main.rs
 | `-t, --type <TYPE>` | Set the source language. Required for standard input and overrides extension-based detection. |
 | `--format <FORMAT>` | Select `skeleton`, `json`, or `sexp` output. Defaults to `skeleton`. |
 | `-g, --glob <GLOB>` | Include or exclude files. Prefix an exclusion with `!`; rules are applied in order. |
-| `-e, --regexp <REGEXP>` | Include matching classes, functions, and Markdown headings. May be repeated and is available for skeleton output. |
+| `-e, --regexp <REGEXP>` | Include matching top-level symbols. May be repeated and is available for skeleton output. |
+| `--match-imports` | Also match and include imports when using `--regexp`. |
 | `-i, --ignore-case` | Make regular-expression matching case-insensitive. |
 | `-h, --help` | Print command-line help. |
 | `-V, --version` | Print the version. |

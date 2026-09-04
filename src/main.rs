@@ -29,7 +29,8 @@ Options:
   -t, --type <TYPE>                Source language; required for stdin; overrides file extension
       --format <FORMAT>            Output format: skeleton, json, or sexp [default: skeleton]
   -g, --glob <GLOB>                Include or exclude files; prefix exclusions with !
-  -e, --regexp <REGEXP>            Output matching classes/functions/headings; repeatable
+  -e, --regexp <REGEXP>            Output matching top-level entities; repeatable
+      --match-imports              Also match and output imports with --regexp
   -i, --ignore-case                Make regexp matching case insensitive
   -h, --help                       Print help
   -V, --version                    Print version
@@ -54,6 +55,7 @@ struct Args {
     glob_values: Vec<String>,
     regexps: Vec<Regex>,
     ignore_case: bool,
+    match_imports: bool,
 }
 
 #[derive(Serialize)]
@@ -151,8 +153,13 @@ fn run() -> Result<(), String> {
             write_index(&mut stdout, args.format, language, &source)?;
         } else {
             let tree = parse_source(&source, language)?;
-            let skeleton =
-                indexer::skeleton_matching(language, tree.root_node(), &source, &args.regexps);
+            let skeleton = indexer::skeleton_matching_imports(
+                language,
+                tree.root_node(),
+                &source,
+                &args.regexps,
+                args.match_imports,
+            );
             if skeleton.is_empty() {
                 continue;
             }
@@ -368,6 +375,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String
     let mut glob_values = Vec::new();
     let mut regexp_values = Vec::new();
     let mut ignore_case = false;
+    let mut match_imports = false;
     let mut args = args.peekable();
 
     while let Some(arg) = args.next() {
@@ -405,6 +413,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String
                 regexp_values.push(value);
             }
             "-i" | "--ignore-case" => ignore_case = true,
+            "--match-imports" => match_imports = true,
             "-" => files.push(PathBuf::from("-")),
             _ if arg.starts_with("--format=") => {
                 format = parse_format(&arg["--format=".len()..])?;
@@ -426,6 +435,9 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String
     if !regexp_values.is_empty() && !matches!(format, OutputFormat::Skeleton) {
         return Err("--regexp is only supported with skeleton output".to_owned());
     }
+    if match_imports && regexp_values.is_empty() {
+        return Err("--match-imports requires --regexp".to_owned());
+    }
     let regexps = regexp_values
         .into_iter()
         .map(|value| parse_regexp(&value, ignore_case))
@@ -441,6 +453,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String
         glob_values,
         regexps,
         ignore_case,
+        match_imports,
     }))
 }
 
@@ -623,6 +636,7 @@ mod tests {
         assert!(args.regexps[2].is_match("Repo1"));
         assert!(!args.regexps[0].is_match("Loader"));
         assert!(!args.ignore_case);
+        assert!(!args.match_imports);
         assert!(
             parse_args(
                 ["--format=json", "--regexp=load"]
@@ -639,6 +653,16 @@ mod tests {
             .unwrap();
         assert!(insensitive.ignore_case);
         assert!(insensitive.regexps[0].is_match("Load"));
+
+        let imports = parse_args(
+            ["--match-imports", "--regexp=^Service$"]
+                .into_iter()
+                .map(String::from),
+        )
+        .unwrap()
+        .unwrap();
+        assert!(imports.match_imports);
+        assert!(parse_args(["--match-imports"].into_iter().map(String::from)).is_err());
 
         assert!(parse_args(["--glob=["].into_iter().map(String::from)).is_err());
         for old_option in [

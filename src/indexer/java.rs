@@ -1,7 +1,7 @@
 use tree_sitter::Node;
 
 use super::{
-    ChildStyle, Entry, Section, child, compact_whitespace, find_child, new_entry, new_import_entry,
+    ChildStyle, Entry, Section, child, compact_whitespace, find_child, new_import_entry,
     new_symbol_entry, node_text, ranged_child, ranged_symbol_child, truncate, truncate_child_count,
 };
 
@@ -29,7 +29,14 @@ fn extract_package(node: Node<'_>, source: &[u8]) -> Option<Entry> {
         .trim()
         .trim_end_matches(';')
         .trim();
-    (!package.is_empty()).then(|| new_entry(Section::Module, node, package.to_owned()))
+    (!package.is_empty()).then(|| {
+        new_symbol_entry(
+            Section::Module,
+            node,
+            package.to_owned(),
+            package.to_owned(),
+        )
+    })
 }
 
 fn extract_import(node: Node<'_>, source: &[u8]) -> Option<Entry> {
@@ -85,9 +92,10 @@ fn extract_interface(node: Node<'_>, source: &[u8]) -> Option<Entry> {
         label.push_str(node_text(extends, source));
     }
 
-    let mut entry = new_entry(
+    let mut entry = new_symbol_entry(
         Section::Trait,
         node,
+        node_text(name, source).to_owned(),
         truncate(&compact_whitespace(&label), SIGNATURE_LIMIT),
     );
     if let Some(body) = node.child_by_field_name("body") {
@@ -103,9 +111,10 @@ fn extract_enum(node: Node<'_>, source: &[u8]) -> Option<Entry> {
     label.push_str(node_text(name, source));
     append_field(&mut label, node, "interfaces", source, true);
 
-    let mut entry = new_entry(
+    let mut entry = new_symbol_entry(
         Section::Type,
         node,
+        node_text(name, source).to_owned(),
         truncate(&compact_whitespace(&label), SIGNATURE_LIMIT),
     );
     if let Some(body) = node.child_by_field_name("body") {
@@ -147,9 +156,10 @@ fn extract_annotation_type(node: Node<'_>, source: &[u8]) -> Option<Entry> {
     let mut label = declaration_prefix(node, source);
     label.push_str("@interface ");
     label.push_str(node_text(name, source));
-    Some(new_entry(
+    Some(new_symbol_entry(
         Section::Type,
         node,
+        node_text(name, source).to_owned(),
         truncate(&compact_whitespace(&label), SIGNATURE_LIMIT),
     ))
 }

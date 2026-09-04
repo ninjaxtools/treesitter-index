@@ -1,8 +1,9 @@
 use tree_sitter::Node;
 
 use super::{
-    Entry, Section, compact_whitespace, find_child, new_entry, new_import_entry, new_symbol_entry,
-    node_text, ranged_child, ranged_symbol_child, truncate, truncate_child_count,
+    Entry, Section, compact_whitespace, find_child, new_import_entry, new_symbol_entry,
+    new_symbols_entry, node_text, ranged_child, ranged_symbol_child, truncate,
+    truncate_child_count,
 };
 
 const SIGNATURE_LIMIT: usize = 160;
@@ -82,9 +83,17 @@ fn extract_ambient(
     if header.is_empty() {
         Vec::new()
     } else {
-        vec![new_entry(
+        let symbol_name = header
+            .strip_prefix("declare ")
+            .unwrap_or(&header)
+            .split_whitespace()
+            .next()
+            .unwrap_or(&header)
+            .to_owned();
+        vec![new_symbol_entry(
             Section::Module,
             range_node,
+            symbol_name,
             truncate(&format!("{prefix}{header}"), SIGNATURE_LIMIT),
         )]
     }
@@ -118,6 +127,11 @@ fn extract_declaration(
             .into_iter()
             .collect(),
         "internal_module" | "module" => extract_module(node, source, prefix, range_node, attrs)
+            .into_iter()
+            .collect(),
+        "expression_statement" => find_child(node, "internal_module")
+            .or_else(|| find_child(node, "module"))
+            .and_then(|module| extract_module(module, source, prefix, range_node, attrs))
             .into_iter()
             .collect(),
         "lexical_declaration" | "variable_declaration" => {
@@ -250,9 +264,10 @@ fn extract_interface(
         text.push_str(node_text(extends, source));
     }
 
-    let mut entry = new_entry(
+    let mut entry = new_symbol_entry(
         Section::Type,
         range_node,
+        node_text(name, source).to_owned(),
         truncate(&compact_whitespace(&text), SIGNATURE_LIMIT),
     );
     entry.attrs = combined_attrs(attrs, node, source);
@@ -296,7 +311,12 @@ fn extract_type_alias(
         text.push_str(" = ");
         text.push_str(&truncate(&value, 80));
     }
-    let mut entry = new_entry(Section::Type, range_node, text);
+    let mut entry = new_symbol_entry(
+        Section::Type,
+        range_node,
+        node_text(name, source).to_owned(),
+        text,
+    );
     entry.attrs = combined_attrs(attrs, node, source);
     Some(entry)
 }
@@ -309,9 +329,10 @@ fn extract_enum(
     attrs: &[String],
 ) -> Option<Entry> {
     let name = node.child_by_field_name("name")?;
-    let mut entry = new_entry(
+    let mut entry = new_symbol_entry(
         Section::Type,
         range_node,
+        node_text(name, source).to_owned(),
         format!("{prefix}enum {}", node_text(name, source)),
     );
     entry.attrs = combined_attrs(attrs, node, source);
@@ -325,11 +346,12 @@ fn extract_module(
     range_node: Node<'_>,
     attrs: &[String],
 ) -> Option<Entry> {
-    node.child_by_field_name("name")?;
+    let name = node.child_by_field_name("name")?;
     let header = signature_before(node, node.child_by_field_name("body"), source);
-    let mut entry = new_entry(
+    let mut entry = new_symbol_entry(
         Section::Module,
         range_node,
+        node_text(name, source).to_owned(),
         truncate(&format!("{prefix}{header}"), SIGNATURE_LIMIT),
     );
     entry.attrs = combined_attrs(attrs, node, source);
@@ -370,9 +392,12 @@ fn extract_variables(
             }
         }
 
-        let mut entry = new_entry(
+        let mut symbol_names = Vec::new();
+        collect_binding_names(name, source, &mut symbol_names);
+        let mut entry = new_symbols_entry(
             Section::Constant,
             range_node,
+            symbol_names,
             truncate(&compact_whitespace(&text), SIGNATURE_LIMIT),
         );
         if entries.is_empty() {
@@ -381,6 +406,31 @@ fn extract_variables(
         entries.push(entry);
     }
     entries
+}
+
+fn collect_binding_names(node: Node<'_>, source: &[u8], names: &mut Vec<String>) {
+    match node.kind() {
+        "identifier" | "shorthand_property_identifier_pattern" => {
+            names.push(node_text(node, source).to_owned());
+        }
+        "pair_pattern" => {
+            if let Some(value) = node.child_by_field_name("value") {
+                collect_binding_names(value, source, names);
+            }
+        }
+        "assignment_pattern" => {
+            if let Some(left) = node.child_by_field_name("left") {
+                collect_binding_names(left, source, names);
+            }
+        }
+        "object_pattern" | "array_pattern" | "rest_pattern" => {
+            let mut cursor = node.walk();
+            for child in node.named_children(&mut cursor) {
+                collect_binding_names(child, source, names);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn declaration_child(node: Node<'_>) -> Option<Node<'_>> {

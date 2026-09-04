@@ -1,8 +1,8 @@
 use tree_sitter::Node;
 
 use super::{
-    ChildStyle, Entry, Section, compact_whitespace, find_child, new_entry, new_import_entry,
-    new_symbol_entry, node_text, ranged_child, truncate, truncate_child_count,
+    ChildStyle, Entry, Section, compact_whitespace, find_child, new_import_entry, new_symbol_entry,
+    new_symbols_entry, node_text, ranged_child, truncate, truncate_child_count,
 };
 
 const SIGNATURE_LIMIT: usize = 160;
@@ -90,9 +90,10 @@ fn path_segments(value: &str) -> Vec<String> {
 
 fn extract_module(node: Node<'_>, source: &[u8]) -> Option<Entry> {
     let name = node.child_by_field_name("name")?;
-    Some(new_entry(
+    Some(new_symbol_entry(
         Section::Module,
         node,
+        node_text(name, source).to_owned(),
         prefixed(visibility(node, source), node_text(name, source)),
     ))
 }
@@ -114,9 +115,10 @@ fn extract_constant(node: Node<'_>, source: &[u8]) -> Option<Entry> {
     declaration.push_str(node_text(name, source));
     declaration.push_str(": ");
     declaration.push_str(node_text(type_node, source));
-    Some(new_entry(
+    Some(new_symbol_entry(
         Section::Constant,
         node,
+        node_text(name, source).to_owned(),
         truncate(
             &compact_whitespace(&prefixed(visibility(node, source), &declaration)),
             SIGNATURE_LIMIT,
@@ -125,10 +127,11 @@ fn extract_constant(node: Node<'_>, source: &[u8]) -> Option<Entry> {
 }
 
 fn extract_type_alias(node: Node<'_>, source: &[u8], attrs: &[String]) -> Option<Entry> {
-    node.child_by_field_name("name")?;
-    let mut entry = new_entry(
+    let name = node.child_by_field_name("name")?;
+    let mut entry = new_symbol_entry(
         Section::Type,
         node,
+        node_text(name, source).to_owned(),
         truncate(&declaration_before(node, None, source), SIGNATURE_LIMIT),
     );
     entry.attrs = relevant_attrs(attrs);
@@ -142,9 +145,10 @@ fn extract_data_type(node: Node<'_>, source: &[u8], attrs: &[String]) -> Option<
     append_field(&mut text, node, "type_parameters", source);
     append_direct_child(&mut text, node, "where_clause", source);
 
-    let mut entry = new_entry(
+    let mut entry = new_symbol_entry(
         Section::Type,
         node,
+        node_text(name, source).to_owned(),
         truncate(
             &compact_whitespace(&prefixed(visibility(node, source), &text)),
             SIGNATURE_LIMIT,
@@ -247,9 +251,10 @@ fn extract_trait(node: Node<'_>, source: &[u8]) -> Option<Entry> {
     append_field(&mut text, node, "bounds", source);
     append_direct_child(&mut text, node, "where_clause", source);
 
-    let mut entry = new_entry(
+    let mut entry = new_symbol_entry(
         Section::Trait,
         node,
+        node_text(name, source).to_owned(),
         truncate(
             &compact_whitespace(&prefixed(visibility(node, source), &text)),
             SIGNATURE_LIMIT,
@@ -268,7 +273,8 @@ fn extract_impl(node: Node<'_>, source: &[u8]) -> Option<Entry> {
     if !text.is_empty() {
         text.push(' ');
     }
-    if let Some(trait_node) = node.child_by_field_name("trait") {
+    let trait_node = node.child_by_field_name("trait");
+    if let Some(trait_node) = trait_node {
         if impl_is_negative(node, trait_node, source) {
             text.push('!');
         }
@@ -278,9 +284,14 @@ fn extract_impl(node: Node<'_>, source: &[u8]) -> Option<Entry> {
     text.push_str(node_text(type_node, source));
     append_direct_child(&mut text, node, "where_clause", source);
 
-    let mut entry = new_entry(
+    let mut symbol_names = vec![node_text(type_node, source).to_owned()];
+    if let Some(trait_node) = trait_node {
+        symbol_names.push(node_text(trait_node, source).to_owned());
+    }
+    let mut entry = new_symbols_entry(
         Section::Impl,
         node,
+        symbol_names,
         truncate(&compact_whitespace(&text), SIGNATURE_LIMIT),
     );
     if let Some(body) = node.child_by_field_name("body") {
@@ -346,9 +357,10 @@ fn function_signature(node: Node<'_>, source: &[u8], include_visibility: bool) -
 
 fn extract_macro(node: Node<'_>, source: &[u8]) -> Option<Entry> {
     let name = node.child_by_field_name("name")?;
-    Some(new_entry(
+    Some(new_symbol_entry(
         Section::Macro,
         node,
+        node_text(name, source).to_owned(),
         format!("{}!", node_text(name, source)),
     ))
 }
