@@ -43,7 +43,7 @@ Index a directory recursively, restricting the input to Rust files:
 treesitter-index -g '*.rs' src
 ```
 
-Show only top-level classes or functions whose names match a regular
+Show only classes, functions, or Markdown headings whose names match a regular
 expression:
 
 ```sh
@@ -64,12 +64,15 @@ treesitter-index --format sexp src/main.rs
 | `-t, --type <TYPE>` | Set the source language. Required for standard input and overrides extension-based detection. |
 | `--format <FORMAT>` | Select `skeleton`, `json`, or `sexp` output. Defaults to `skeleton`. |
 | `-g, --glob <GLOB>` | Include or exclude files. Prefix an exclusion with `!`; rules are applied in order. |
-| `-e, --regexp <REGEXP>` | Include matching top-level classes and functions. May be repeated and is available for skeleton output. |
+| `-e, --regexp <REGEXP>` | Include matching classes, functions, and Markdown headings. May be repeated and is available for skeleton output. |
 | `-i, --ignore-case` | Make regular-expression matching case-insensitive. |
 | `-h, --help` | Print command-line help. |
 | `-V, --version` | Print the version. |
 
 Directory traversal respects standard ignore files such as `.gitignore`.
+
+Supported languages are Python, JavaScript, JSX, TypeScript, TSX, Rust, Go,
+Java, and Markdown (`.md` and `.markdown`).
 
 ## Acknowledgements
 

@@ -29,7 +29,7 @@ Options:
   -t, --type <TYPE>                Source language; required for stdin; overrides file extension
       --format <FORMAT>            Output format: skeleton, json, or sexp [default: skeleton]
   -g, --glob <GLOB>                Include or exclude files; prefix exclusions with !
-  -e, --regexp <REGEXP>            Output matching top-level classes/functions; repeatable
+  -e, --regexp <REGEXP>            Output matching classes/functions/headings; repeatable
   -i, --ignore-case                Make regexp matching case insensitive
   -h, --help                       Print help
   -V, --version                    Print version
@@ -37,7 +37,7 @@ Options:
 Glob rules are applied in order and the last matching rule wins.
 Unmatched files are excluded when any inclusion glob is given.
 
-Languages: python, javascript, jsx, typescript, tsx, rust, go, java
+Languages: python, javascript, jsx, typescript, tsx, rust, go, java, markdown
 ";
 
 #[derive(Clone, Copy)]
@@ -775,6 +775,7 @@ mod tests {
                 main.clone(),
                 source.join("indexer/go.rs"),
                 source.join("indexer/java.rs"),
+                source.join("indexer/markdown.rs"),
                 source.join("indexer/python.rs"),
                 source.join("indexer/rust.rs"),
                 source.join("indexer/typescript.rs"),

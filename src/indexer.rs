@@ -1,5 +1,6 @@
 mod go;
 mod java;
+mod markdown;
 mod python;
 mod rust;
 mod typescript;
@@ -22,6 +23,7 @@ pub enum SourceLanguage {
     Rust,
     Go,
     Java,
+    Markdown,
 }
 
 impl SourceLanguage {
@@ -35,6 +37,7 @@ impl SourceLanguage {
             "rust" | "rs" => Ok(Self::Rust),
             "go" => Ok(Self::Go),
             "java" => Ok(Self::Java),
+            "markdown" | "md" => Ok(Self::Markdown),
             _ => Err(format!("unsupported language: {value}")),
         }
     }
@@ -53,6 +56,7 @@ impl SourceLanguage {
             "rs" => Ok(Self::Rust),
             "go" => Ok(Self::Go),
             "java" => Ok(Self::Java),
+            "md" | "markdown" => Ok(Self::Markdown),
             _ => Err(format!("unsupported file extension: .{extension}")),
         }
     }
@@ -67,6 +71,7 @@ impl SourceLanguage {
             Self::Rust => "rust",
             Self::Go => "go",
             Self::Java => "java",
+            Self::Markdown => "markdown",
         }
     }
 
@@ -79,6 +84,7 @@ impl SourceLanguage {
             Self::Rust => tree_sitter_rust::LANGUAGE.into(),
             Self::Go => tree_sitter_go::LANGUAGE.into(),
             Self::Java => tree_sitter_java::LANGUAGE.into(),
+            Self::Markdown => tree_sitter_md::LANGUAGE.into(),
         }
     }
 }
@@ -94,6 +100,7 @@ enum Section {
     Function,
     Class,
     Macro,
+    Heading,
 }
 
 #[derive(Clone, Copy)]
@@ -140,11 +147,13 @@ pub fn skeleton_matching(
     let mut extracted = extract(language, root, source);
     if !regexps.is_empty() {
         extracted.entries.retain(|entry| {
-            matches!(entry.section, Section::Function | Section::Class)
-                && entry
-                    .symbol_name
-                    .as_deref()
-                    .is_some_and(|name| regexps.iter().any(|regexp| regexp.is_match(name)))
+            matches!(
+                entry.section,
+                Section::Function | Section::Class | Section::Heading
+            ) && entry
+                .symbol_name
+                .as_deref()
+                .is_some_and(|name| regexps.iter().any(|regexp| regexp.is_match(name)))
         });
         extracted.module_doc = None;
         extracted.test_lines.clear();
@@ -177,6 +186,7 @@ fn extract(language: SourceLanguage, root: Node<'_>, source: &[u8]) -> Extracted
             SourceLanguage::Rust => rust::extract(child, source, &attrs),
             SourceLanguage::Go => go::extract(child, source, &attrs),
             SourceLanguage::Java => java::extract(child, source, &attrs),
+            SourceLanguage::Markdown => markdown::extract(child, source, &attrs),
         };
         if let Some(first) = extracted.first_mut()
             && let Some(doc_start) = doc_comment_start_line(language, child, source)
@@ -216,6 +226,7 @@ fn is_doc_comment(language: SourceLanguage, node: Node<'_>, source: &[u8]) -> bo
         SourceLanguage::Java => {
             node.kind() == "block_comment" && node_text(node, source).starts_with("/**")
         }
+        SourceLanguage::Markdown => false,
     }
 }
 
@@ -318,6 +329,7 @@ fn render_skeleton(extracted: &Extracted) -> String {
         (Section::Function, "fns:"),
         (Section::Class, "classes:"),
         (Section::Macro, "macros:"),
+        (Section::Heading, "headings:"),
     ];
     let mut sections = Vec::new();
 
@@ -655,6 +667,14 @@ mod tests {
         assert_eq!(
             SourceLanguage::from_path(Path::new("lib.rs")).unwrap(),
             SourceLanguage::Rust
+        );
+        assert_eq!(
+            SourceLanguage::from_path(Path::new("README.md")).unwrap(),
+            SourceLanguage::Markdown
+        );
+        assert_eq!(
+            SourceLanguage::from_name("markdown").unwrap(),
+            SourceLanguage::Markdown
         );
         assert!(SourceLanguage::from_path(Path::new("data.json")).is_err());
     }
