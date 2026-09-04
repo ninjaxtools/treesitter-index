@@ -2,7 +2,7 @@ use tree_sitter::Node;
 
 use super::{
     Entry, Section, compact_whitespace, find_child, new_entry, new_import_entry, new_symbol_entry,
-    node_text, ranged_child, truncate, truncate_child_count,
+    node_text, ranged_child, ranged_symbol_child, truncate, truncate_child_count,
 };
 
 const SIGNATURE_LIMIT: usize = 160;
@@ -164,8 +164,14 @@ fn extract_class(
         match member.kind() {
             "method_definition" | "method_signature" | "abstract_method_signature" => {
                 let signature = member_signature(member, source, false);
-                if !signature.is_empty() {
-                    entry.children.push(ranged_child(signature, member));
+                if !signature.is_empty()
+                    && let Some(name) = member.child_by_field_name("name")
+                {
+                    entry.children.push(ranged_symbol_child(
+                        signature,
+                        member,
+                        node_text(name, source).to_owned(),
+                    ));
                 }
             }
             "public_field_definition"

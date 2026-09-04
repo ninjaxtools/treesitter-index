@@ -123,6 +123,7 @@ struct Entry {
 }
 
 struct EntryChild {
+    symbol_name: Option<String>,
     text: String,
     range: Option<(usize, usize)>,
 }
@@ -147,17 +148,21 @@ pub fn skeleton_matching(
     let mut extracted = extract(language, root, source);
     if !regexps.is_empty() {
         extracted.entries.retain_mut(|entry| {
-            let matched = matches!(
-                entry.section,
-                Section::Function | Section::Class | Section::Heading
-            ) && entry
+            let entry_matches = entry
                 .symbol_name
                 .as_deref()
                 .is_some_and(|name| regexps.iter().any(|regexp| regexp.is_match(name)));
-            if matched && entry.section == Section::Class {
-                entry.children.clear();
+            if entry.section == Section::Class {
+                entry.children.retain(|child| {
+                    child
+                        .symbol_name
+                        .as_deref()
+                        .is_some_and(|name| regexps.iter().any(|regexp| regexp.is_match(name)))
+                });
+                entry_matches || !entry.children.is_empty()
+            } else {
+                matches!(entry.section, Section::Function | Section::Heading) && entry_matches
             }
-            matched
         });
         extracted.module_doc = None;
         extracted.test_lines.clear();
@@ -563,11 +568,32 @@ fn new_import_entry(node: Node<'_>, paths: Vec<Vec<String>>) -> Entry {
 }
 
 fn child(text: String) -> EntryChild {
-    EntryChild { text, range: None }
+    EntryChild {
+        symbol_name: None,
+        text,
+        range: None,
+    }
 }
 
 fn ranged_child(text: String, node: Node<'_>) -> EntryChild {
     EntryChild {
+        symbol_name: None,
+        text,
+        range: Some((line_start(node), line_end(node))),
+    }
+}
+
+fn symbol_child(text: String, symbol_name: String) -> EntryChild {
+    EntryChild {
+        symbol_name: Some(symbol_name),
+        text,
+        range: None,
+    }
+}
+
+fn ranged_symbol_child(text: String, node: Node<'_>, symbol_name: String) -> EntryChild {
+    EntryChild {
+        symbol_name: Some(symbol_name),
         text,
         range: Some((line_start(node), line_end(node))),
     }
@@ -708,6 +734,40 @@ mod tests {
         assert!(!typescript.contains("ServiceShape"));
         assert!(!typescript.contains("loader"));
         assert!(!typescript.contains("Ignore"));
+    }
+
+    #[test]
+    fn matches_class_methods_by_bare_name_and_omits_other_members() {
+        let python = index_matching(
+            SourceLanguage::Python,
+            "class Repository:\n    @cached\n    def connect(self): pass\n    def close(self): pass\nclass FieldOnly:\n    connect = lambda self: None\n",
+            &["^connect$"],
+        );
+        assert!(python.contains("Repository"));
+        assert!(python.contains("@cached"));
+        assert!(python.contains("connect(self)"));
+        assert!(!python.contains("close(self)"));
+        assert!(!python.contains("FieldOnly"));
+
+        let typescript = index_matching(
+            SourceLanguage::TypeScript,
+            "class Service { run(): void {} stop(): void {} }\nclass FieldOnly { run = () => 1; }\n",
+            &["^run$"],
+        );
+        assert!(typescript.contains("Service"));
+        assert!(typescript.contains("run(): void"));
+        assert!(!typescript.contains("stop(): void"));
+        assert!(!typescript.contains("FieldOnly"));
+
+        let java = index_matching(
+            SourceLanguage::Java,
+            "class Service { void run() {} void stop() {} }\nclass FieldOnly { int run; }\n",
+            &["^run$"],
+        );
+        assert!(java.contains("class Service"));
+        assert!(java.contains("void run()"));
+        assert!(!java.contains("void stop()"));
+        assert!(!java.contains("FieldOnly"));
     }
 
     #[test]

@@ -2,7 +2,7 @@ use tree_sitter::Node;
 
 use super::{
     ChildStyle, Entry, Section, child, compact_whitespace, find_child, new_entry, new_import_entry,
-    new_symbol_entry, node_text, ranged_child, truncate, truncate_child_count,
+    new_symbol_entry, node_text, ranged_child, ranged_symbol_child, truncate, truncate_child_count,
 };
 
 const SIGNATURE_LIMIT: usize = 160;
@@ -161,13 +161,27 @@ fn extract_members(body: Node<'_>, source: &[u8], interface: bool) -> Vec<super:
     for member in body.named_children(&mut cursor) {
         match member.kind() {
             "method_declaration" => {
-                if let Some(signature) = method_signature(member, source) {
-                    members.push(ranged_child(signature, member));
+                if let (Some(signature), Some(name)) = (
+                    method_signature(member, source),
+                    member.child_by_field_name("name"),
+                ) {
+                    members.push(ranged_symbol_child(
+                        signature,
+                        member,
+                        node_text(name, source).to_owned(),
+                    ));
                 }
             }
             "constructor_declaration" if !interface => {
-                if let Some(signature) = constructor_signature(member, source) {
-                    members.push(ranged_child(signature, member));
+                if let (Some(signature), Some(name)) = (
+                    constructor_signature(member, source),
+                    member.child_by_field_name("name"),
+                ) {
+                    members.push(ranged_symbol_child(
+                        signature,
+                        member,
+                        node_text(name, source).to_owned(),
+                    ));
                 }
             }
             "field_declaration" if !interface => {
