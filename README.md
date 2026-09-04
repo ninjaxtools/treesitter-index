@@ -82,6 +82,23 @@ Directory traversal respects standard ignore files such as `.gitignore`.
 Supported languages are Python, JavaScript, JSX, TypeScript, TSX, Rust, Go,
 Java, and Markdown (`.md` and `.markdown`).
 
+## Releasing
+
+Releases are built by cargo-dist and published to GitHub Releases. To release a
+new version:
+
+1. Update `version` in `Cargo.toml` and commit the change.
+2. Run `dist plan` to validate the release configuration.
+3. Tag the commit with the matching version and push the tag:
+
+```sh
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+The GitHub Actions release workflow builds archives and checksums for Linux,
+macOS, and Windows. The tag version must match the package version.
+
 ## Acknowledgements
 
 This project was adapted from [Maki](https://github.com/tontinton/maki).

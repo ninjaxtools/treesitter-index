@@ -3,6 +3,11 @@ name = "kestrel-treesitter-index"
 version = "0.1.0"
 edition = "2024"
 publish = false
+license = "MIT"
+repository = "https://github.com/ninjaxtools/treesitter-index"
+
+[package.metadata.dist]
+dist = true
 
 [[bin]]
 name = "treesitter-index"
@@ -26,3 +31,8 @@ tree-sitter-typescript = "=0.23.2"
 codegen-units = 1
 lto = true
 strip = true
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
