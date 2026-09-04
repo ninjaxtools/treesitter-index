@@ -1,4 +1,4 @@
-This repository employs the use of LLMs for automatic programming.
+This repository employs the use of LLMs for [automatic programming](https://antirez.com/news/159).
 
 This readme is written by a human.
 
