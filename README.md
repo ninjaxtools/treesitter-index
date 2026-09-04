@@ -20,7 +20,13 @@ Or to build a binary in `target/release/treesitter-index`.
 cargo build --release
 ```
 
+### ripgrep
+
+[ripgrep](https://github.com/BurntSushi/ripgrep) (`rg`) is used to pre-filter files when a regex pattern is used (`-e`) and more than one input file or folder is provided and needs to be available on the system.
+
 ## Usage
+
+### AGENTS.md
 
 Put this instruction in your AGENTS.md
 
@@ -28,7 +34,9 @@ Put this instruction in your AGENTS.md
 - When analyzing source files, prefer running `treesitter-index -g <glob> <files or directories...>` early to obtain a compact structural skeleton before reading the full file, and then perform targeted reads for implementation details. Line numbers are indicated in square brackets (e.g [5] means line 5, and [5-10] means lines 5 to 10). To filter for specific symbols us '-e', for example to search for classes or functions containing 'manager' or 'main' (-i for ignore case): `treesitter-index -g "*.ts" -i -e "manager|main" src`. Don't use '*' as the glob since that circumvents the default ignore rules.
 ```
 
-[ripgrep](https://github.com/BurntSushi/ripgrep) (`rg`) is used to pre-filter files when a regex pattern is used (`-e`) and more than one input file or folder is provided and needs to be available on the system.
+### Skill file
+
+You can use the skill in `.agents/skills/treesitter-index/SKILL.md ` instead of the instruction as well.
 
 ### Examples
 
