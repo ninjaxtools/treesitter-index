@@ -146,14 +146,18 @@ pub fn skeleton_matching(
 ) -> String {
     let mut extracted = extract(language, root, source);
     if !regexps.is_empty() {
-        extracted.entries.retain(|entry| {
-            matches!(
+        extracted.entries.retain_mut(|entry| {
+            let matched = matches!(
                 entry.section,
                 Section::Function | Section::Class | Section::Heading
             ) && entry
                 .symbol_name
                 .as_deref()
-                .is_some_and(|name| regexps.iter().any(|regexp| regexp.is_match(name)))
+                .is_some_and(|name| regexps.iter().any(|regexp| regexp.is_match(name)));
+            if matched && entry.section == Section::Class {
+                entry.children.clear();
+            }
+            matched
         });
         extracted.module_doc = None;
         extracted.test_lines.clear();
@@ -687,7 +691,7 @@ mod tests {
             &["^Repo.*$", "^process_.ata$"],
         );
         assert!(python.contains("Repository"));
-        assert!(python.contains("connect(self)"));
+        assert!(!python.contains("connect(self)"));
         assert!(python.contains("async process_data(value)"));
         assert!(!python.contains("import"));
         assert!(!python.contains("VALUE"));
@@ -699,7 +703,7 @@ mod tests {
             &["^Service$", "^lo.d$"],
         );
         assert!(typescript.contains("export Service"));
-        assert!(typescript.contains("run(): void"));
+        assert!(!typescript.contains("run(): void"));
         assert!(typescript.contains("export load(path: string): void"));
         assert!(!typescript.contains("ServiceShape"));
         assert!(!typescript.contains("loader"));
@@ -732,7 +736,7 @@ mod tests {
             &["^Serv.*$", "^Point$"],
         );
         assert!(java.contains("class Service"));
-        assert!(java.contains("void run()"));
+        assert!(!java.contains("void run()"));
         assert!(java.contains("record Point(int x, int y)"));
         assert!(!java.contains("ServiceShape"));
         assert!(!java.contains("Ignore"));
