@@ -14,12 +14,6 @@ In a checked out repository:
 cargo install --path .
 ```
 
-Or to build a binary in `target/release/treesitter-index`.
-
-```sh
-cargo build --release
-```
-
 ### ripgrep
 
 [ripgrep](https://github.com/BurntSushi/ripgrep) (`rg`) is used to pre-filter files when a regex pattern is used (`-e`) and more than one input file or folder is provided and needs to be available on the system.
@@ -84,20 +78,11 @@ Java, and Markdown (`.md` and `.markdown`).
 
 ## Releasing
 
-Releases are built by cargo-dist and published to GitHub Releases. To release a
-new version:
-
-1. Update `version` in `Cargo.toml` and commit the change.
-2. Run `dist plan` to validate the release configuration.
-3. Tag the commit with the matching version and push the tag:
+Release a new binary distribution on github with:
 
 ```sh
-git tag v0.1.0
-git push origin v0.1.0
+cargo release patch --no-publish --execute
 ```
-
-The GitHub Actions release workflow builds archives and checksums for Linux,
-macOS, and Windows. The tag version must match the package version.
 
 ## Acknowledgements
 
