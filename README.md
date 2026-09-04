@@ -1,25 +1,24 @@
+This repository employs the use of LLMs for automatic programming.
+
+This readme is written by a human.
+
 # treesitter-index
 
-`treesitter-index` is a command-line tool that uses
-[Tree-sitter](https://tree-sitter.github.io/tree-sitter/) to produce a compact,
-line-numbered overview of source code. Instead of printing every implementation
-detail, it extracts the structure that is most useful for quickly understanding
-a file or repository: imports, modules, constants, types, traits, functions,
-classes, methods, and tests. This is most useful to conserve tokens with agentic
-programming.
-
-This tool was generated with the help of large language models (LLMs).
+`treesitter-index` is a cli tool that uses [tree-sitter](https://tree-sitter.github.io/tree-sitter/) to generate a source code skeleton that strips most of the code implementation but retains many of the structurally useful information that can act as an index into the source code. The resulting index output is most useful to conserve tokens and improve the agentic programming experience.
 
 ## Installation
+
+In a checked out repository:
+
+```sh
+cargo install --path .
+```
+
+Or to build a binary in `target/release/treesitter-index`.
 
 ```sh
 cargo build --release
 ```
-
-The binary will be available at `target/release/treesitter-index`.
-
-[ripgrep](https://github.com/BurntSushi/ripgrep) (`rg`) is also required when
-using regular-expression filtering across multiple files.
 
 ## Usage
 
@@ -29,6 +28,8 @@ Put this instruction in your AGENTS.md
 - When analyzing source files, prefer running `treesitter-index -g <glob> <files or directories...>` early to obtain a compact structural skeleton before reading the full file, and then perform targeted reads for implementation details. Line numbers are indicated in square brackets (e.g [5] means line 5, and [5-10] means lines 5 to 10). To filter for specific symbols us '-e', for example to search for classes or functions containing 'manager' or 'main' (-i for ignore case): `treesitter-index -g "*.ts" -i -e "manager|main" src`. Don't use '*' as the glob since that circumvents the default ignore rules.
 ```
 
+[ripgrep](https://github.com/BurntSushi/ripgrep) (`rg`) is used to pre-filter files when a regex pattern is used (`-e`) and more than one input file or folder is provided and needs to be available on the system.
+
 ### Examples
 
 Index one file:
@@ -37,20 +38,19 @@ Index one file:
 treesitter-index src/main.rs
 ```
 
-Index a directory recursively, restricting the input to Rust files:
+Index a directory recursively, only rust files:
 
 ```sh
 treesitter-index -g '*.rs' src
 ```
 
-Show only classes, functions, or Markdown headings whose names match a regular
-expression:
+Filter for top-level symbols (i.e. classes, functions, markdown headings):
 
 ```sh
 treesitter-index -i -e 'manager|main' src
 ```
 
-Inspect the complete Tree-sitter syntax tree as JSON or an S-expression:
+Output the treesitter syntax tree instead of a skeleton:
 
 ```sh
 treesitter-index --format json src/main.rs
