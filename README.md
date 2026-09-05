@@ -85,6 +85,12 @@ Release a new binary distribution on github with:
 cargo release patch --no-publish --execute
 ```
 
+## Related Work
+
+- [CoderLM: REPL to API Mapping](https://github.com/JaredStewart/coderlm/blob/main/server/REPL_to_API.md)
+- [Aider: Building a better repository map with tree sitter](https://aider.chat/2023/10/22/repomap.html)
+- [Maki: Token Economy](https://maki.sh/docs/token-economy/)
+
 ## Acknowledgements
 
 This project was adapted from [Maki](https://github.com/tontinton/maki).
