@@ -272,27 +272,35 @@ fn extract_interface(
     );
     entry.attrs = combined_attrs(attrs, node, source);
 
-    let mut total = 0;
+    let mut field_count = 0;
     let mut cursor = body.walk();
     for member in body.named_children(&mut cursor) {
-        if matches!(
-            member.kind(),
-            "property_signature"
-                | "method_signature"
-                | "call_signature"
-                | "construct_signature"
-                | "index_signature"
-        ) {
-            total += 1;
-            if total <= super::FIELD_TRUNCATE_THRESHOLD {
+        match member.kind() {
+            "method_signature" => {
                 let signature = member_signature(member, source, false);
-                if !signature.is_empty() {
-                    entry.children.push(ranged_child(signature, member));
+                if !signature.is_empty()
+                    && let Some(name) = member.child_by_field_name("name")
+                {
+                    entry.children.push(ranged_symbol_child(
+                        signature,
+                        member,
+                        node_text(name, source).to_owned(),
+                    ));
                 }
             }
+            "property_signature" | "call_signature" | "construct_signature" | "index_signature" => {
+                field_count += 1;
+                if field_count <= super::FIELD_TRUNCATE_THRESHOLD {
+                    let signature = member_signature(member, source, false);
+                    if !signature.is_empty() {
+                        entry.children.push(ranged_child(signature, member));
+                    }
+                }
+            }
+            _ => {}
         }
     }
-    truncate_child_count(&mut entry.children, total);
+    truncate_child_count(&mut entry.children, field_count);
     Some(entry)
 }
 
@@ -418,7 +426,7 @@ fn collect_binding_names(node: Node<'_>, source: &[u8], names: &mut Vec<String>)
                 collect_binding_names(value, source, names);
             }
         }
-        "assignment_pattern" => {
+        "assignment_pattern" | "object_assignment_pattern" => {
             if let Some(left) = node.child_by_field_name("left") {
                 collect_binding_names(left, source, names);
             }
@@ -541,13 +549,96 @@ fn combined_attrs(attrs: &[String], node: Node<'_>, source: &[u8]) -> Vec<String
 mod tests {
     use tree_sitter::Parser;
 
-    use super::super::{SourceLanguage, skeleton};
+    use super::super::{SourceLanguage, skeleton, skeleton_matching};
 
     fn index(source: &str, language: SourceLanguage) -> String {
         let mut parser = Parser::new();
         parser.set_language(&language.grammar()).unwrap();
         let tree = parser.parse(source, None).unwrap();
         skeleton(language, tree.root_node(), source.as_bytes())
+    }
+
+    fn index_matching(source: &str, language: SourceLanguage, pattern: &str) -> String {
+        let mut parser = Parser::new();
+        parser.set_language(&language.grammar()).unwrap();
+        let tree = parser.parse(source, None).unwrap();
+        skeleton_matching(
+            language,
+            tree.root_node(),
+            source.as_bytes(),
+            &[regex::Regex::new(pattern).unwrap()],
+        )
+    }
+
+    #[test]
+    fn matches_default_shorthand_bindings_without_indexing_defaults() {
+        let source = "const { port = 8080, host = defaultHost, source: local = fallback, nested: { timeout = defaultTimeout } } = config;";
+        for language in [SourceLanguage::TypeScript, SourceLanguage::JavaScript] {
+            for name in ["port", "host", "local", "timeout"] {
+                let output = index_matching(source, language, &format!("^{name}$"));
+                assert!(output.contains(name), "missing {name}: {output}");
+            }
+            for name in [
+                "defaultHost",
+                "fallback",
+                "defaultTimeout",
+                "source",
+                "nested",
+                "config",
+            ] {
+                assert!(
+                    index_matching(source, language, &format!("^{name}$")).is_empty(),
+                    "unexpected binding {name}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn matches_interface_methods_by_bare_name_but_not_fields() {
+        let source = "interface Service { run(value: Input): Output; stop(): void; port: number; }\ninterface FieldOnly { run: () => void; }";
+        let output = index_matching(source, SourceLanguage::TypeScript, "^run$");
+        assert!(output.contains("interface Service"));
+        assert!(output.contains("run(value: Input): Output"));
+        assert!(!output.contains("stop()"));
+        assert!(!output.contains("port"));
+        assert!(!output.contains("FieldOnly"));
+        let output = index_matching(source, SourceLanguage::TypeScript, "^stop$");
+        assert!(output.contains("stop(): void"));
+        assert!(!output.contains("run("));
+        for name in ["port", "value", "Input", "Output"] {
+            assert!(
+                index_matching(source, SourceLanguage::TypeScript, &format!("^{name}$")).is_empty()
+            );
+        }
+    }
+
+    #[test]
+    fn keeps_all_interface_methods_and_counts_only_truncated_fields() {
+        let mut source = String::from("interface Service {\n");
+        for member in 0..10 {
+            source.push_str(&format!(
+                "field{member}: number;\nmethod{member}(): void;\n"
+            ));
+        }
+        source.push('}');
+        let output = index(&source, SourceLanguage::TypeScript);
+        assert!(output.contains("field7: number"));
+        assert!(!output.contains("field8: number"));
+        assert!(!output.contains("field9: number"));
+        assert!(output.contains("[2 more truncated]"));
+        for member in 0..10 {
+            assert!(output.contains(&format!("method{member}(): void")));
+            let matched = index_matching(
+                &source,
+                SourceLanguage::TypeScript,
+                &format!("^method{member}$"),
+            );
+            assert!(matched.contains("interface Service"));
+            assert!(matched.contains(&format!("method{member}(): void")));
+            assert!(!matched.contains("field"));
+            assert!(!matched.contains("truncated"));
+        }
     }
 
     #[test]

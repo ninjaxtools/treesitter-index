@@ -130,6 +130,13 @@ fn extract_enum(node: Node<'_>, source: &[u8]) -> Option<Entry> {
             }
         }
         entry.child_style = ChildStyle::Brief;
+        if let Some(declarations) = find_child(body, "enum_body_declarations") {
+            let members = extract_members(declarations, source, false);
+            if !members.is_empty() {
+                entry.child_style = ChildStyle::Detailed;
+                entry.children.extend(members);
+            }
+        }
     }
     Some(entry)
 }
@@ -143,12 +150,16 @@ fn extract_record(node: Node<'_>, source: &[u8]) -> Option<Entry> {
     append_field(&mut label, node, "type_parameters", source, false);
     label.push_str(node_text(parameters, source));
     append_field(&mut label, node, "interfaces", source, true);
-    Some(new_symbol_entry(
+    let mut entry = new_symbol_entry(
         Section::Class,
         node,
         node_text(name, source).to_owned(),
         truncate(&compact_whitespace(&label), SIGNATURE_LIMIT),
-    ))
+    );
+    if let Some(body) = node.child_by_field_name("body") {
+        entry.children = extract_members(body, source, false);
+    }
+    Some(entry)
 }
 
 fn extract_annotation_type(node: Node<'_>, source: &[u8]) -> Option<Entry> {
@@ -182,7 +193,7 @@ fn extract_members(body: Node<'_>, source: &[u8], interface: bool) -> Vec<super:
                     ));
                 }
             }
-            "constructor_declaration" if !interface => {
+            "constructor_declaration" | "compact_constructor_declaration" if !interface => {
                 if let (Some(signature), Some(name)) = (
                     constructor_signature(member, source),
                     member.child_by_field_name("name"),
@@ -247,16 +258,17 @@ fn method_signature(node: Node<'_>, source: &[u8]) -> Option<String> {
 
 fn constructor_signature(node: Node<'_>, source: &[u8]) -> Option<String> {
     let name = node.child_by_field_name("name")?;
-    let parameters = node.child_by_field_name("parameters")?;
     let mut parts = signature_prefix(node, source);
     if let Some(type_parameters) = node.child_by_field_name("type_parameters") {
         parts.push(node_text(type_parameters, source).to_owned());
     }
-    parts.push(format!(
-        "{}{}",
-        node_text(name, source),
-        node_text(parameters, source)
-    ));
+    let mut declarator = node_text(name, source).to_owned();
+    if let Some(parameters) = node.child_by_field_name("parameters") {
+        declarator.push_str(node_text(parameters, source));
+    } else if node.kind() != "compact_constructor_declaration" {
+        return None;
+    }
+    parts.push(declarator);
     if let Some(throws) = find_child(node, "throws") {
         parts.push(node_text(throws, source).to_owned());
     }
@@ -268,16 +280,23 @@ fn constructor_signature(node: Node<'_>, source: &[u8]) -> Option<String> {
 
 fn field_signature(node: Node<'_>, source: &[u8]) -> Option<String> {
     let field_type = node.child_by_field_name("type")?;
-    let declarator = node.child_by_field_name("declarator")?;
-    let name = declarator.child_by_field_name("name")?;
     let mut parts = signature_prefix(node, source);
     parts.push(node_text(field_type, source).to_owned());
 
-    let mut declarator_text = node_text(name, source).to_owned();
-    if let Some(dimensions) = declarator.child_by_field_name("dimensions") {
-        declarator_text.push_str(node_text(dimensions, source));
+    let mut declarators = Vec::new();
+    let mut cursor = node.walk();
+    for declarator in node.children_by_field_name("declarator", &mut cursor) {
+        let name = declarator.child_by_field_name("name")?;
+        let mut text = node_text(name, source).to_owned();
+        if let Some(dimensions) = declarator.child_by_field_name("dimensions") {
+            text.push_str(node_text(dimensions, source));
+        }
+        declarators.push(text);
     }
-    parts.push(declarator_text);
+    if declarators.is_empty() {
+        return None;
+    }
+    parts.push(declarators.join(", "));
     Some(truncate(
         &compact_whitespace(&parts.join(" ")),
         SIGNATURE_LIMIT,
@@ -400,5 +419,120 @@ mod tests {
         assert!(output.contains("int eight"));
         assert!(!output.contains("int nine"));
         assert!(output.contains("[1 more truncated]"));
+    }
+
+    #[test]
+    fn extracts_record_members_and_both_constructor_forms() {
+        let output = index(
+            "public record Point(int x, int y) {\n\
+               static final int ORIGIN = compute();\n\
+               public Point { validate(x, y); }\n\
+               public Point(int x) { this(x, 0); }\n\
+               public int sum() { return x + y; }\n\
+             }",
+        );
+
+        assert!(output.contains("public record Point(int x, int y) [1-6]"));
+        assert!(output.contains("static final int ORIGIN [2]"));
+        assert!(output.contains("public Point [3]"));
+        assert!(output.contains("public Point(int x) [4]"));
+        assert!(output.contains("public int sum() [5]"));
+        assert!(!output.contains("compute()"));
+        assert!(!output.contains("validate"));
+        assert!(!output.contains("this("));
+        assert!(!output.contains("return"));
+    }
+
+    #[test]
+    fn extracts_enum_body_members_with_detailed_ranges() {
+        let output = index(
+            "enum Direction {\n\
+               UP(1), DOWN(-1);\n\
+               private final int step;\n\
+               Direction(int step) { this.step = step; }\n\
+               public int delta() { return step; }\n\
+             }",
+        );
+
+        assert!(output.contains("    UP\n    DOWN\n"));
+        assert!(output.contains("    private final int step [3]\n"));
+        assert!(output.contains("    Direction(int step) [4]\n"));
+        assert!(output.contains("    public int delta() [5]\n"));
+        assert!(!output.contains("UP(1)"));
+        assert!(!output.contains("this.step"));
+        assert!(!output.contains("return"));
+        assert!(index("enum Direction { UP, DOWN }").contains("    UP, DOWN\n"));
+        assert!(index("enum Direction { UP, DOWN; }").contains("    UP, DOWN\n"));
+    }
+
+    #[test]
+    fn preserves_all_field_and_constant_declarators_without_initializers() {
+        let output = index(
+            "class Bounds {\n\
+               int left = compute(), right = 10;\n\
+               int[] first[] = {{1}}, second[][] = {{{2}}};\n\
+             }\n\
+             interface Limits {\n\
+               int MIN = 0, MAX = compute();\n\
+               int LOW[] = {1}, HIGH[][] = {{2}};\n\
+             }",
+        );
+
+        assert!(output.contains("int left, right [2]"));
+        assert!(output.contains("int[] first[], second[][] [3]"));
+        assert!(output.contains("int MIN, MAX [6]"));
+        assert!(output.contains("int LOW[], HIGH[][] [7]"));
+        assert!(!output.contains("compute()"));
+        assert!(!output.contains('='));
+        assert!(!output.contains('{'));
+    }
+
+    #[test]
+    fn filters_record_enum_and_interface_methods_by_name() {
+        use regex::Regex;
+
+        let language = SourceLanguage::Java;
+        let source = "record Point(int x) {\n\
+                        int value() { return x; }\n\
+                        int other() { return 0; }\n\
+                      }\n\
+                      enum Direction { UP;\n\
+                        int value() { return 1; }\n\
+                        int other() { return 0; }\n\
+                      }\n\
+                      interface Value {\n\
+                        int value();\n\
+                        int other();\n\
+                      }";
+        let mut parser = Parser::new();
+        parser.set_language(&language.grammar()).unwrap();
+        let tree = parser.parse(source, None).unwrap();
+        let mut cursor = tree.root_node().walk();
+        for declaration in tree.root_node().named_children(&mut cursor) {
+            let entries = super::extract(declaration, source.as_bytes(), &[]);
+            assert_eq!(entries.len(), 1);
+            let method = entries[0]
+                .children
+                .iter()
+                .find(|child| child.symbol_name.as_deref() == Some("value"))
+                .expect("record, enum, and interface methods must retain searchable names");
+            assert_eq!(method.text, "int value()");
+            assert!(method.range.is_some());
+        }
+        let output = super::super::skeleton_matching(
+            language,
+            tree.root_node(),
+            source.as_bytes(),
+            &[Regex::new("^value$").unwrap()],
+        );
+
+        assert!(output.contains("record Point(int x) [1-4]"));
+        assert!(output.contains("int value() [2]"));
+        assert!(output.contains("enum Direction [5-8]"));
+        assert!(output.contains("int value() [6]"));
+        assert!(output.contains("interface Value [9-12]"));
+        assert!(output.contains("int value() [10]"));
+        assert!(!output.contains("other"));
+        assert!(!output.contains("UP"));
     }
 }

@@ -2,7 +2,8 @@ use tree_sitter::Node;
 
 use super::{
     Entry, Section, compact_whitespace, find_child, new_entry, new_import_entry, new_symbol_entry,
-    new_symbols_entry, node_text, ranged_child, truncate, truncate_child_count,
+    new_symbols_entry, node_text, ranged_child, ranged_symbol_child, truncate,
+    truncate_child_count,
 };
 
 const TYPE_LIMIT: usize = 60;
@@ -180,15 +181,18 @@ fn extract_struct(
             .child_by_field_name("type")
             .map(|node| node_text(node, source))
             .unwrap_or("_");
-        let names = if names.is_empty() {
-            "_".to_owned()
+        let text = if names.is_empty() {
+            if find_child(field, "*").is_some() {
+                format!("*{field_type}")
+            } else {
+                field_type.to_owned()
+            }
         } else {
-            names.join(", ")
+            format!("{} {field_type}", names.join(", "))
         };
-        entry.children.push(ranged_child(
-            compact_whitespace(&format!("{names} {field_type}")),
-            field,
-        ));
+        entry
+            .children
+            .push(ranged_child(compact_whitespace(&text), field));
     }
     truncate_child_count(&mut entry.children, total);
     entry
@@ -212,7 +216,12 @@ fn extract_interface(
             _ => None,
         };
         if let Some(text) = text {
-            entry.children.push(ranged_child(text, member));
+            let child = if let Some(name) = member.child_by_field_name("name") {
+                ranged_symbol_child(text, member, node_text(name, source).to_owned())
+            } else {
+                ranged_child(text, member)
+            };
+            entry.children.push(child);
         }
     }
     entry
@@ -297,14 +306,24 @@ fn collect_specs<'tree>(
 mod tests {
     use tree_sitter::Parser;
 
-    use super::super::{SourceLanguage, skeleton};
+    use regex::Regex;
+
+    use super::super::{SourceLanguage, skeleton_matching};
 
     fn index(source: &str) -> String {
+        index_matching(source, &[])
+    }
+
+    fn index_matching(source: &str, patterns: &[&str]) -> String {
         let language = SourceLanguage::Go;
         let mut parser = Parser::new();
         parser.set_language(&language.grammar()).unwrap();
         let tree = parser.parse(source, None).unwrap();
-        skeleton(language, tree.root_node(), source.as_bytes())
+        let regexps: Vec<_> = patterns
+            .iter()
+            .map(|pattern| Regex::new(pattern).unwrap())
+            .collect();
+        skeleton_matching(language, tree.root_node(), source.as_bytes(), &regexps)
     }
 
     #[test]
@@ -366,5 +385,71 @@ mod tests {
         assert!(output.contains("A int [3]"));
         assert!(output.contains("[1 more truncated]"));
         assert!(output.contains("Get(key string) (string, error) [14]"));
+    }
+
+    #[test]
+    fn preserves_embedded_pointer_fields_and_field_truncation() {
+        let output = index(
+            "package p\n\
+             type Record struct {\n\
+               *Base\n\
+               *pkg.Remote `json:\"remote\"`\n\
+               Plain\n\
+               pkg.Value\n\
+               *Generic[int]\n\
+               X, Y *Base\n\
+               _ int\n\
+               Named string `json:\"name\"`\n\
+               *Hidden\n\
+             }",
+        );
+        for expected in [
+            "*Base [3]",
+            "*pkg.Remote [4]",
+            "Plain [5]",
+            "pkg.Value [6]",
+            "*Generic[int] [7]",
+            "X, Y *Base [8]",
+            "_ int [9]",
+            "Named string [10]",
+            "[1 more truncated]",
+        ] {
+            assert!(
+                output.contains(expected),
+                "missing {expected:?} in:\n{output}"
+            );
+        }
+        assert!(!output.contains("_ Base"));
+        assert!(!output.contains("_ Plain"));
+        assert!(!output.contains("json:"));
+        assert!(!output.contains("Hidden"));
+    }
+
+    #[test]
+    fn filters_interface_methods_by_bare_name() {
+        let source = "package p\n\
+            type Store interface {\n\
+                Get(\n\
+                    key string,\n\
+                ) (string, error)\n\
+                Put(key, value string) error\n\
+                Base\n\
+            }";
+        for pattern in ["^Get$", "^(Store|Get)$"] {
+            let output = index_matching(source, &[pattern]);
+            assert!(output.contains("interface Store [2-8]"), "{output}");
+            assert!(
+                output.contains("Get( key string, ) (string, error) [3-5]"),
+                "{output}"
+            );
+            assert!(!output.contains("Put("));
+            assert!(!output.contains("Base"));
+        }
+        let parent = index_matching(source, &["^Store$"]);
+        assert!(parent.contains("interface Store [2-8]"), "{parent}");
+        assert!(!parent.contains("Get("));
+        assert!(!parent.contains("Put("));
+        assert!(!parent.contains("Base"));
+        assert!(index_matching(source, &["^key$"]).is_empty());
     }
 }

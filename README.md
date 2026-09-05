@@ -18,7 +18,7 @@ cargo install --path .
 
 ### ripgrep
 
-[ripgrep](https://github.com/BurntSushi/ripgrep) (`rg`) is used to pre-filter files when a regex pattern is used (`-e`) and more than one input file or folder is provided and needs to be available on the system.
+[ripgrep](https://github.com/BurntSushi/ripgrep) (`rg`) is used to pre-filter files when a regex pattern is used (`-e`) and more than 10 files are to be processed. The `rg` binary must be available on the system. This should be turned off with `--no-prefilter` if precise matches are desired.
 
 ## Usage
 
@@ -70,6 +70,7 @@ treesitter-index --format sexp src/main.rs
 | `-g, --glob <GLOB>` | Include or exclude files. Prefix an exclusion with `!`; rules are applied in order. |
 | `-e, --regexp <REGEXP>` | Include matching top-level symbols. May be repeated and is available for skeleton output. |
 | `--match-imports` | Also match and include imports when using `--regexp`. |
+| `--no-prefilter` | Disable prefiltering with ripgrep. |
 | `-i, --ignore-case` | Make regular-expression matching case-insensitive. |
 | `-h, --help` | Print command-line help. |
 | `-V, --version` | Print the version. |

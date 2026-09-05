@@ -75,9 +75,9 @@ fn from_import_paths(node: Node<'_>, source: &[u8], base: Vec<String>) -> Vec<Ve
 
 fn segmented_path(value: &str) -> Vec<String> {
     value
-        .split('.')
+        // Empty leading segments preserve relative-import depth when joined or rendered.
+        .split_terminator('.')
         .map(|part| compact_whitespace(part.trim()))
-        .filter(|part| !part.is_empty())
         .collect()
 }
 
@@ -253,9 +253,9 @@ fn assignment_text(
     if left.kind() != "identifier"
         || (constants_only
             && (name.is_empty()
-                || !name
-                    .chars()
-                    .all(|character| character == '_' || character.is_ascii_uppercase())))
+                || !name.chars().all(|character| {
+                    character == '_' || character.is_ascii_uppercase() || character.is_ascii_digit()
+                })))
     {
         return None;
     }
@@ -329,7 +329,7 @@ fn decorators(attrs: &[String], node: Node<'_>, source: &[u8]) -> Vec<String> {
 mod tests {
     use tree_sitter::Parser;
 
-    use super::super::{SourceLanguage, skeleton};
+    use super::super::{SourceLanguage, skeleton, skeleton_matching_imports};
 
     fn index(source: &str) -> String {
         let mut parser = Parser::new();
@@ -338,6 +338,67 @@ mod tests {
             .unwrap();
         let tree = parser.parse(source, None).unwrap();
         skeleton(SourceLanguage::Python, tree.root_node(), source.as_bytes())
+    }
+
+    fn index_matching(source: &str, pattern: &str, match_imports: bool) -> String {
+        let mut parser = Parser::new();
+        parser
+            .set_language(&SourceLanguage::Python.grammar())
+            .unwrap();
+        let tree = parser.parse(source, None).unwrap();
+        skeleton_matching_imports(
+            SourceLanguage::Python,
+            tree.root_node(),
+            source.as_bytes(),
+            &[regex::Regex::new(pattern).unwrap()],
+            match_imports,
+        )
+    }
+
+    #[test]
+    fn matches_digit_constants_without_including_lowercase_bindings() {
+        let source = "LIMIT2 = 2\nHTTP_2: int = 20\nlimit2 = 3\nHttp_2 = 4\n";
+        assert!(index_matching(source, "^LIMIT2$", false).contains("LIMIT2 = 2"));
+        assert!(index_matching(source, "^HTTP_2$", false).contains("HTTP_2 = 20"));
+        assert!(index_matching(source, "^limit2$", false).is_empty());
+        assert!(index_matching(source, "^Http_2$", false).is_empty());
+    }
+
+    #[test]
+    fn preserves_relative_import_depth_in_trie_and_exact_path_matches() {
+        let source = "from pkg import X\nfrom .pkg import X\nfrom ..pkg import X\n";
+        assert!(index_matching(source, "^$", true).is_empty());
+        assert_eq!(
+            index(source),
+            "imports: [1-3]\n  .{.pkg.X, pkg.X}\n  pkg.X\n"
+        );
+        assert_eq!(
+            index_matching(source, r"^pkg\.X$", true),
+            "imports: [1]\n  pkg.X\n"
+        );
+        assert_eq!(
+            index_matching(source, r"^\.pkg\.X$", true),
+            "imports: [2]\n  .pkg.X\n"
+        );
+        assert_eq!(
+            index_matching(source, r"^\.\.pkg\.X$", true),
+            "imports: [3]\n  ..pkg.X\n"
+        );
+    }
+
+    #[test]
+    fn preserves_dot_only_relative_import_modules() {
+        let source = "from . import X\nfrom .. import X\n";
+        assert!(index_matching(source, "^$", true).is_empty());
+        assert_eq!(index(source), "imports: [1-2]\n  .{.X, X}\n");
+        assert_eq!(
+            index_matching(source, r"^\.X$", true),
+            "imports: [1]\n  .X\n"
+        );
+        assert_eq!(
+            index_matching(source, r"^\.\.X$", true),
+            "imports: [2]\n  ..X\n"
+        );
     }
 
     #[test]

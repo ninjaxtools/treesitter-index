@@ -2,7 +2,8 @@ use tree_sitter::Node;
 
 use super::{
     ChildStyle, Entry, Section, compact_whitespace, find_child, new_import_entry, new_symbol_entry,
-    new_symbols_entry, node_text, ranged_child, truncate, truncate_child_count,
+    new_symbols_entry, node_text, ranged_child, ranged_symbol_child, truncate,
+    truncate_child_count,
 };
 
 const SIGNATURE_LIMIT: usize = 160;
@@ -16,6 +17,7 @@ pub(super) fn extract(node: Node<'_>, source: &[u8], attrs: &[String]) -> Vec<En
         "struct_item" | "enum_item" | "union_item" => extract_data_type(node, source, attrs),
         "trait_item" => extract_trait(node, source),
         "impl_item" => extract_impl(node, source),
+        "foreign_mod_item" => return extract_foreign_mod(node, source),
         "function_item" | "function_signature_item" => extract_function(node, source),
         "macro_definition" => extract_macro(node, source),
         _ => None,
@@ -261,7 +263,7 @@ fn extract_trait(node: Node<'_>, source: &[u8]) -> Option<Entry> {
         ),
     );
     if let Some(body) = node.child_by_field_name("body") {
-        extract_methods(body, source, false, &mut entry);
+        extract_members(body, source, false, &mut entry);
     }
     Some(entry)
 }
@@ -295,21 +297,63 @@ fn extract_impl(node: Node<'_>, source: &[u8]) -> Option<Entry> {
         truncate(&compact_whitespace(&text), SIGNATURE_LIMIT),
     );
     if let Some(body) = node.child_by_field_name("body") {
-        extract_methods(body, source, true, &mut entry);
+        extract_members(body, source, true, &mut entry);
     }
     Some(entry)
 }
 
-fn extract_methods(body: Node<'_>, source: &[u8], include_visibility: bool, entry: &mut Entry) {
+fn extract_members(body: Node<'_>, source: &[u8], include_visibility: bool, entry: &mut Entry) {
     let mut cursor = body.walk();
-    for method in body
-        .named_children(&mut cursor)
-        .filter(|child| matches!(child.kind(), "function_item" | "function_signature_item"))
-    {
-        if let Some(signature) = function_signature(method, source, include_visibility) {
-            entry.children.push(ranged_child(signature, method));
+    for member in body.named_children(&mut cursor) {
+        let Some(name) = member.child_by_field_name("name") else {
+            continue;
+        };
+        let text = match member.kind() {
+            "function_item" | "function_signature_item" => {
+                function_signature(member, source, include_visibility)
+            }
+            "associated_type" | "type_item" => Some(truncate(
+                &declaration_before(member, None, source),
+                SIGNATURE_LIMIT,
+            )),
+            "const_item" => member.child_by_field_name("type").map(|type_node| {
+                truncate(
+                    &compact_whitespace(&String::from_utf8_lossy(
+                        &source[member.start_byte()..type_node.end_byte()],
+                    )),
+                    SIGNATURE_LIMIT,
+                )
+            }),
+            _ => None,
+        };
+        if let Some(text) = text {
+            entry.children.push(ranged_symbol_child(
+                text,
+                member,
+                node_text(name, source).to_owned(),
+            ));
         }
     }
+}
+
+fn extract_foreign_mod(node: Node<'_>, source: &[u8]) -> Vec<Entry> {
+    let Some(body) = node.child_by_field_name("body") else {
+        return Vec::new();
+    };
+    let context = declaration_before(node, Some(body), source);
+    let mut cursor = body.walk();
+    body.named_children(&mut cursor)
+        .filter_map(|member| {
+            let mut entry = match member.kind() {
+                "function_item" | "function_signature_item" => extract_function(member, source),
+                "static_item" => extract_constant(member, source),
+                "associated_type" => extract_type_alias(member, source, &[]),
+                _ => None,
+            }?;
+            entry.text = truncate(&prefixed(&context, &entry.text), SIGNATURE_LIMIT);
+            Some(entry)
+        })
+        .collect()
 }
 
 fn extract_function(node: Node<'_>, source: &[u8]) -> Option<Entry> {
@@ -424,14 +468,24 @@ fn relevant_attrs(attrs: &[String]) -> Vec<String> {
 mod tests {
     use tree_sitter::Parser;
 
-    use super::super::{SourceLanguage, skeleton};
+    use regex::Regex;
+
+    use super::super::{SourceLanguage, skeleton_matching};
 
     fn index(source: &str) -> String {
+        index_matching(source, &[])
+    }
+
+    fn index_matching(source: &str, patterns: &[&str]) -> String {
         let language = SourceLanguage::Rust;
         let mut parser = Parser::new();
         parser.set_language(&language.grammar()).unwrap();
         let tree = parser.parse(source, None).unwrap();
-        skeleton(language, tree.root_node(), source.as_bytes())
+        let regexps: Vec<_> = patterns
+            .iter()
+            .map(|pattern| Regex::new(pattern).unwrap())
+            .collect();
+        skeleton_matching(language, tree.root_node(), source.as_bytes(), &regexps)
     }
 
     #[test]
@@ -462,5 +516,138 @@ mod tests {
         assert!(output.contains("<T> Build<T> for Item<T> where T: Copy"));
         assert!(output.contains("pub new(value: T) -> Self [4]"));
         assert!(!output.contains("Self { value }"));
+    }
+
+    #[test]
+    fn extracts_associated_declarations_without_constant_initializers() {
+        let output = index(
+            "trait Store {\n\
+               type Item<'a>: Send where Self: 'a;\n\
+               const LIMIT: usize;\n\
+               const DEFAULT: usize = { 100 + 200 };\n\
+             }\n\
+             impl Store for Cache {\n\
+               type Item<'a> = Vec<&'a str>;\n\
+               const LIMIT: usize = { 300 + 400 };\n\
+             }\n\
+             impl Cache { pub const SIZE: usize = 99; }",
+        );
+
+        for expected in [
+            "type Item<'a>: Send where Self: 'a [2]",
+            "const LIMIT: usize [3]",
+            "const DEFAULT: usize [4]",
+            "type Item<'a> = Vec<&'a str> [7]",
+            "const LIMIT: usize [8]",
+            "pub const SIZE: usize [10]",
+        ] {
+            assert!(
+                output.contains(expected),
+                "missing {expected:?} in:\n{output}"
+            );
+        }
+        assert!(!output.contains("100 + 200"));
+        assert!(!output.contains("300 + 400"));
+        assert!(!output.contains("99"));
+    }
+
+    #[test]
+    fn filters_trait_and_impl_members_by_bare_name() {
+        let source = "trait Store {\n\
+            type Item;\n\
+            const LIMIT: usize;\n\
+            fn load(&self) -> Self::Item;\n\
+            fn skip(&self) {}\n\
+        }\n\
+        impl Store for Cache {\n\
+            type Item = Vec<u8>;\n\
+            const LIMIT: usize = 10;\n\
+            fn load(&self) -> Self::Item {\n\
+                todo!()\n\
+            }\n\
+            fn skip(&self) {}\n\
+        }";
+
+        for pattern in ["^load$", "^(Store|load)$"] {
+            let output = index_matching(source, &[pattern]);
+            assert!(output.contains("Store [1-6]"), "{output}");
+            assert!(output.contains("Store for Cache [7-14]"), "{output}");
+            assert!(output.contains("load(&self) -> Self::Item [4]"), "{output}");
+            assert!(
+                output.contains("load(&self) -> Self::Item [10-12]"),
+                "{output}"
+            );
+            assert!(!output.contains("skip"));
+            assert!(!output.contains("type Item"));
+            assert!(!output.contains("const LIMIT"));
+            assert!(!output.contains("todo!"));
+        }
+        let types = index_matching(source, &["^Item$"]);
+        assert!(types.contains("type Item [2]"), "{types}");
+        assert!(types.contains("type Item = Vec<u8> [8]"), "{types}");
+        assert!(!types.contains("load("));
+        assert!(!types.contains("const LIMIT"));
+
+        let constants = index_matching(source, &["^LIMIT$"]);
+        assert!(constants.contains("const LIMIT: usize [3]"), "{constants}");
+        assert!(constants.contains("const LIMIT: usize [9]"), "{constants}");
+        assert!(!constants.contains("type Item"));
+        assert!(!constants.contains("load("));
+
+        let parent = index_matching(source, &["^Store$"]);
+        assert!(parent.contains("Store for Cache"), "{parent}");
+        assert!(!parent.contains("load("));
+        assert!(!parent.contains("skip("));
+        assert!(!parent.contains("type Item"));
+        assert!(!parent.contains("const LIMIT"));
+    }
+
+    #[test]
+    fn extracts_foreign_symbols_with_abi_and_declaration_ranges() {
+        let source = "unsafe extern \"C\" {\n\
+            pub fn foreign_read(\n\
+                buffer: *mut u8,\n\
+            ) -> i32;\n\
+            pub static mut STATE: i32;\n\
+        }\n\
+        extern \"system\" {\n\
+            fn other();\n\
+            static READY: bool;\n\
+        }";
+        let output = index(source);
+        for expected in [
+            "unsafe extern \"C\" pub foreign_read( buffer: *mut u8, ) -> i32 [2-4]",
+            "unsafe extern \"C\" pub static mut STATE: i32 [5]",
+            "extern \"system\" other() [8]",
+            "extern \"system\" static READY: bool [9]",
+        ] {
+            assert!(
+                output.contains(expected),
+                "missing {expected:?} in:\n{output}"
+            );
+        }
+        let function = index_matching(source, &["^foreign_read$"]);
+        assert!(
+            function.contains("unsafe extern \"C\" pub foreign_read("),
+            "{function}"
+        );
+        assert!(!function.contains("STATE"));
+        assert!(!function.contains("other"));
+        let state = index_matching(source, &["^STATE$"]);
+        assert!(
+            state.contains("unsafe extern \"C\" pub static mut STATE: i32 [5]"),
+            "{state}"
+        );
+        assert!(!state.contains("foreign_read"));
+        assert!(index_matching(source, &["^C$"]).is_empty());
+    }
+
+    #[test]
+    fn extracts_opaque_foreign_types() {
+        let source =
+            "unsafe extern \"C\" {\n    type Opaque;\n    fn release(value: *mut Opaque);\n}";
+        let output = index_matching(source, &["^Opaque$"]);
+        assert_eq!(output, "types:\n  unsafe extern \"C\" type Opaque [2]\n");
+        assert!(index(source).contains("type Opaque [2]"));
     }
 }

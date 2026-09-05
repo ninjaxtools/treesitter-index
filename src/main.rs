@@ -31,12 +31,17 @@ Options:
   -g, --glob <GLOB>                Include or exclude files; prefix exclusions with !
   -e, --regexp <REGEXP>            Output matching top-level entities; repeatable
       --match-imports              Also match and output imports with --regexp
+      --no-prefilter               Disable rg prefiltering for precise matches
   -i, --ignore-case                Make regexp matching case insensitive
   -h, --help                       Print help
   -V, --version                    Print version
 
 Glob rules are applied in order and the last matching rule wins.
 Unmatched files are excluded when any inclusion glob is given.
+
+With --regexp, rg prefilters more than 10 supported files after path expansion
+and glob filtering (stdin is not counted). Prefiltering can miss matches;
+use --no-prefilter when precise matches are desired.
 
 Languages: python, javascript, jsx, typescript, tsx, rust, go, java, markdown
 ";
@@ -56,6 +61,7 @@ struct Args {
     regexps: Vec<Regex>,
     ignore_case: bool,
     match_imports: bool,
+    no_prefilter: bool,
 }
 
 #[derive(Serialize)]
@@ -133,15 +139,17 @@ fn run() -> Result<(), String> {
         inputs.push((file, language));
     }
 
-    if multiple && !args.regexps.is_empty() {
+    if !args.no_prefilter && !args.regexps.is_empty() {
         let paths: Vec<_> = inputs
             .iter()
             .filter_map(|(file, _)| file.filter(|path| *path != Path::new("-")))
             .collect();
-        let matching_files = rg_matching_files(&paths, &args.regexps, args.ignore_case)?;
-        inputs.retain(|(file, _)| {
-            file.is_none_or(|path| path == Path::new("-") || matching_files.contains(path))
-        });
+        if paths.len() > 10 {
+            let matching_files = rg_matching_files(&paths, &args.regexps, args.ignore_case)?;
+            inputs.retain(|(file, _)| {
+                file.is_none_or(|path| path == Path::new("-") || matching_files.contains(path))
+            });
+        }
     }
 
     let mut stdout = io::stdout().lock();
@@ -376,6 +384,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String
     let mut regexp_values = Vec::new();
     let mut ignore_case = false;
     let mut match_imports = false;
+    let mut no_prefilter = false;
     let mut args = args.peekable();
 
     while let Some(arg) = args.next() {
@@ -414,6 +423,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String
             }
             "-i" | "--ignore-case" => ignore_case = true,
             "--match-imports" => match_imports = true,
+            "--no-prefilter" => no_prefilter = true,
             "-" => files.push(PathBuf::from("-")),
             _ if arg.starts_with("--format=") => {
                 format = parse_format(&arg["--format=".len()..])?;
@@ -454,6 +464,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String
         regexps,
         ignore_case,
         match_imports,
+        no_prefilter,
     }))
 }
 
@@ -637,6 +648,13 @@ mod tests {
         assert!(!args.regexps[0].is_match("Loader"));
         assert!(!args.ignore_case);
         assert!(!args.match_imports);
+        assert!(!args.no_prefilter);
+        assert!(
+            parse_args(["--no-prefilter"].into_iter().map(String::from))
+                .unwrap()
+                .unwrap()
+                .no_prefilter
+        );
         assert!(
             parse_args(
                 ["--format=json", "--regexp=load"]

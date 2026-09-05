@@ -170,18 +170,13 @@ pub fn skeleton_matching_imports(
             }
 
             let entry_matches = names_match(&entry.symbol_names, regexps);
-            if entry.section == Section::Class {
-                entry.children.retain(|child| {
-                    child
-                        .symbol_name
-                        .as_deref()
-                        .is_some_and(|name| regexps.iter().any(|regexp| regexp.is_match(name)))
-                });
-                entry_matches || !entry.children.is_empty()
-            } else {
-                entry.children.clear();
-                entry_matches
-            }
+            entry.children.retain(|child| {
+                child
+                    .symbol_name
+                    .as_deref()
+                    .is_some_and(|name| regexps.iter().any(|regexp| regexp.is_match(name)))
+            });
+            entry_matches || !entry.children.is_empty()
         });
         extracted.module_doc = None;
         extracted.test_lines.clear();
@@ -198,7 +193,7 @@ fn names_match(names: &[String], regexps: &[Regex]) -> bool {
 fn import_path_matches(path: &[String], separator: &str, regexps: &[Regex]) -> bool {
     let full_path = path.join(separator);
     regexps.iter().any(|regexp| regexp.is_match(&full_path))
-        || path.iter().any(|part| {
+        || path.iter().filter(|part| !part.is_empty()).any(|part| {
             regexps.iter().any(|regexp| regexp.is_match(part))
                 || part
                     .split(|character: char| {
