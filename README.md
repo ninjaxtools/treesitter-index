@@ -8,7 +8,9 @@ This readme is written by a human.
 
 ## Installation
 
-In a checked out repository:
+You can download a binary from one of the releases: https://github.com/ninjaxtools/treesitter-index/releases
+
+Or you can build from source:
 
 ```sh
 cargo install --path .
