@@ -70,7 +70,7 @@ treesitter-index --format sexp src/main.rs
 ### Options
 
 | Option | Description |
-pp| --- | --- |
+| --- | --- |
 | `-t, --type <TYPE>` | Set the source language. Required for standard input and overrides extension-based detection. |
 | `--format <FORMAT>` | Select `skeleton`, `json`, or `sexp` output. Defaults to `skeleton`. |
 | `-g, --glob <GLOB>` | Include or exclude files. Prefix an exclusion with `!`; rules are applied in order. |
