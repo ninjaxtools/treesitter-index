@@ -26,7 +26,7 @@ fn prefilter_threshold_and_precise_matching_override() {
         .map(|(args, hide_rg, _)| {
             let mut command = Command::new(env!("CARGO_BIN_EXE_treesitter-index"));
             command
-                .args(["--match-imports", "-e", "^std::collections::HashSet$"])
+                .args(["-e", "^std::collections::HashSet$"])
                 .args(*args)
                 .arg(&root);
             if *hide_rg {

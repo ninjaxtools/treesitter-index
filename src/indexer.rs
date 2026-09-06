@@ -89,8 +89,8 @@ impl SourceLanguage {
     }
 }
 
-#[derive(Clone, Copy, Eq, PartialEq)]
-enum Section {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SymbolKind {
     Import,
     Module,
     Constant,
@@ -101,6 +101,26 @@ enum Section {
     Class,
     Macro,
     Heading,
+}
+
+use SymbolKind as Section;
+
+impl SymbolKind {
+    pub fn from_name(value: &str) -> Result<Self, String> {
+        match value {
+            "import" | "imports" => Ok(Self::Import),
+            "mod" | "module" | "modules" => Ok(Self::Module),
+            "const" | "consts" | "constant" | "constants" => Ok(Self::Constant),
+            "type" | "types" => Ok(Self::Type),
+            "trait" | "traits" => Ok(Self::Trait),
+            "impl" | "impls" => Ok(Self::Impl),
+            "fn" | "fns" | "function" | "functions" => Ok(Self::Function),
+            "class" | "classes" => Ok(Self::Class),
+            "macro" | "macros" => Ok(Self::Macro),
+            "heading" | "headings" => Ok(Self::Heading),
+            _ => Err(format!("unsupported symbol kind: {value}")),
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -136,33 +156,36 @@ struct Extracted {
 }
 
 pub fn skeleton(language: SourceLanguage, root: Node<'_>, source: &[u8]) -> String {
-    skeleton_matching(language, root, source, &[])
+    skeleton_filtered(language, root, source, &[], &[])
 }
 
+#[cfg(test)]
 pub fn skeleton_matching(
     language: SourceLanguage,
     root: Node<'_>,
     source: &[u8],
     regexps: &[Regex],
 ) -> String {
-    skeleton_matching_imports(language, root, source, regexps, false)
+    skeleton_filtered(language, root, source, regexps, &[])
 }
 
-pub fn skeleton_matching_imports(
+pub fn skeleton_filtered(
     language: SourceLanguage,
     root: Node<'_>,
     source: &[u8],
     regexps: &[Regex],
-    match_imports: bool,
+    kinds: &[SymbolKind],
 ) -> String {
     let mut extracted = extract(language, root, source);
+    if !kinds.is_empty() {
+        extracted
+            .entries
+            .retain(|entry| kinds.contains(&entry.section));
+    }
     if !regexps.is_empty() {
         let import_separator = extracted.import_separator;
         extracted.entries.retain_mut(|entry| {
             if entry.section == Section::Import {
-                if !match_imports {
-                    return false;
-                }
                 entry
                     .import_paths
                     .retain(|path| import_path_matches(path, import_separator, regexps));
@@ -178,6 +201,8 @@ pub fn skeleton_matching_imports(
             });
             entry_matches || !entry.children.is_empty()
         });
+    }
+    if !regexps.is_empty() || !kinds.is_empty() {
         extracted.module_doc = None;
         extracted.test_lines.clear();
     }
@@ -714,16 +739,6 @@ mod tests {
         patterns: &[&str],
         case_insensitive: bool,
     ) -> String {
-        index_matching_with_options(language, source, patterns, case_insensitive, false)
-    }
-
-    fn index_matching_with_options(
-        language: SourceLanguage,
-        source: &str,
-        patterns: &[&str],
-        case_insensitive: bool,
-        match_imports: bool,
-    ) -> String {
         let mut parser = Parser::new();
         parser.set_language(&language.grammar()).unwrap();
         let tree = parser.parse(source, None).unwrap();
@@ -736,12 +751,28 @@ mod tests {
                     .unwrap()
             })
             .collect();
-        skeleton_matching_imports(
+        skeleton_matching(language, tree.root_node(), source.as_bytes(), &patterns)
+    }
+
+    fn index_kinds(
+        language: SourceLanguage,
+        source: &str,
+        kinds: &[SymbolKind],
+        patterns: &[&str],
+    ) -> String {
+        let mut parser = Parser::new();
+        parser.set_language(&language.grammar()).unwrap();
+        let tree = parser.parse(source, None).unwrap();
+        let patterns: Vec<_> = patterns
+            .iter()
+            .map(|pattern| Regex::new(pattern).unwrap())
+            .collect();
+        skeleton_filtered(
             language,
             tree.root_node(),
             source.as_bytes(),
             &patterns,
-            match_imports,
+            kinds,
         )
     }
 
@@ -795,6 +826,40 @@ mod tests {
         assert!(!typescript.contains("ServiceShape"));
         assert!(!typescript.contains("loader"));
         assert!(!typescript.contains("Ignore"));
+    }
+
+    #[test]
+    fn filters_entries_by_symbol_kind() {
+        let source = "import { readFile } from 'fs';\nconst LIMIT = 10;\ntype Id = string;\nclass Service { run(): void {} }\nfunction load(): void {}\n";
+        let output = index_kinds(
+            SourceLanguage::TypeScript,
+            source,
+            &[SymbolKind::Class, SymbolKind::Function],
+            &[],
+        );
+
+        assert!(output.contains("classes:"));
+        assert!(output.contains("  Service ["));
+        assert!(output.contains("fns:"));
+        assert!(output.contains("load(): void"));
+        assert!(!output.contains("imports:"));
+        assert!(!output.contains("consts:"));
+        assert!(!output.contains("types:"));
+    }
+
+    #[test]
+    fn symbol_kind_and_name_filters_both_apply() {
+        let source = "class Service {}\nclass Repository {}\nfunction Service(): void {}\n";
+        let output = index_kinds(
+            SourceLanguage::TypeScript,
+            source,
+            &[SymbolKind::Class],
+            &["^Service$"],
+        );
+
+        assert!(output.contains("  Service ["));
+        assert!(!output.contains("Repository"));
+        assert!(!output.contains("fns:"));
     }
 
     #[test]
@@ -944,47 +1009,37 @@ mod tests {
     }
 
     #[test]
-    fn imports_only_match_when_requested() {
+    fn imports_match_by_default() {
         let source = "import os\nfrom package import Service as Alias\n";
-        assert!(index_matching(SourceLanguage::Python, source, &["^Alias$"]).is_empty());
-        let python =
-            index_matching_with_options(SourceLanguage::Python, source, &["^Alias$"], false, true);
+        let python = index_matching(SourceLanguage::Python, source, &["^Alias$"]);
         assert!(python.contains("package.Service as Alias"));
         assert!(!python.contains("os"));
 
-        let typescript = index_matching_with_options(
+        let typescript = index_matching(
             SourceLanguage::TypeScript,
             "import { Service as Alias } from './service';\n",
             &["^Alias$"],
-            false,
-            true,
         );
         assert!(typescript.contains("Service as Alias"));
 
-        let rust = index_matching_with_options(
+        let rust = index_matching(
             SourceLanguage::Rust,
             "use crate::service::Service as Alias;\n",
             &["^Alias$"],
-            false,
-            true,
         );
         assert!(rust.contains("crate::service::Service as Alias"));
 
-        let go = index_matching_with_options(
+        let go = index_matching(
             SourceLanguage::Go,
             "package main\nimport \"example.com/log\"\n",
             &["^log$"],
-            false,
-            true,
         );
         assert!(go.contains("example.com/log"));
 
-        let java = index_matching_with_options(
+        let java = index_matching(
             SourceLanguage::Java,
             "import static java.util.Collections.emptyList;\n",
             &["^emptyList$"],
-            false,
-            true,
         );
         assert!(java.contains("emptyList"));
     }

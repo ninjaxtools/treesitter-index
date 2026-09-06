@@ -12,7 +12,7 @@ use ignore::{
     WalkBuilder,
     overrides::{Override, OverrideBuilder},
 };
-use indexer::SourceLanguage;
+use indexer::{SourceLanguage, SymbolKind};
 use regex::{Regex, RegexBuilder};
 use serde::Serialize;
 use tree_sitter::{Node, Parser, Point};
@@ -29,8 +29,8 @@ Options:
   -t, --type <TYPE>                Source language; required for stdin; overrides file extension
       --format <FORMAT>            Output format: skeleton, json, or sexp [default: skeleton]
   -g, --glob <GLOB>                Include or exclude files; prefix exclusions with !
-  -e, --regexp <REGEXP>            Output matching top-level entities; repeatable
-      --match-imports              Also match and output imports with --regexp
+  -e, --regexp <REGEXP>            Output matching symbols and imports; repeatable
+  -k, --kind <KIND>                Output symbol kinds; comma-separated or repeatable
       --no-prefilter               Disable rg prefiltering for precise matches
   -i, --ignore-case                Make regexp matching case insensitive
   -h, --help                       Print help
@@ -44,6 +44,7 @@ and glob filtering (stdin is not counted). Prefiltering can miss matches;
 use --no-prefilter when precise matches are desired.
 
 Languages: python, javascript, jsx, typescript, tsx, rust, go, java, markdown
+Kinds: imports, mod, consts, types, traits, impls, fns, classes, macros, headings
 ";
 
 #[derive(Clone, Copy)]
@@ -59,8 +60,8 @@ struct Args {
     files: Vec<PathBuf>,
     glob_values: Vec<String>,
     regexps: Vec<Regex>,
+    kinds: Vec<SymbolKind>,
     ignore_case: bool,
-    match_imports: bool,
     no_prefilter: bool,
 }
 
@@ -156,17 +157,17 @@ fn run() -> Result<(), String> {
     let mut output_index = 0;
     for (file, language) in inputs {
         let source = read_source(file)?;
-        if args.regexps.is_empty() {
+        if args.regexps.is_empty() && args.kinds.is_empty() {
             write_file_prefix(&mut stdout, file, output_index, multiple)?;
             write_index(&mut stdout, args.format, language, &source)?;
         } else {
             let tree = parse_source(&source, language)?;
-            let skeleton = indexer::skeleton_matching_imports(
+            let skeleton = indexer::skeleton_filtered(
                 language,
                 tree.root_node(),
                 &source,
                 &args.regexps,
-                args.match_imports,
+                &args.kinds,
             );
             if skeleton.is_empty() {
                 continue;
@@ -382,8 +383,8 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String
     let mut files = Vec::new();
     let mut glob_values = Vec::new();
     let mut regexp_values = Vec::new();
+    let mut kind_values = Vec::new();
     let mut ignore_case = false;
-    let mut match_imports = false;
     let mut no_prefilter = false;
     let mut args = args.peekable();
 
@@ -421,8 +422,13 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String
                     .ok_or_else(|| "--regexp requires a regular expression".to_owned())?;
                 regexp_values.push(value);
             }
+            "-k" | "--kind" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| "--kind requires a symbol kind".to_owned())?;
+                kind_values.push(value);
+            }
             "-i" | "--ignore-case" => ignore_case = true,
-            "--match-imports" => match_imports = true,
             "--no-prefilter" => no_prefilter = true,
             "-" => files.push(PathBuf::from("-")),
             _ if arg.starts_with("--format=") => {
@@ -437,6 +443,9 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String
             _ if arg.starts_with("--regexp=") => {
                 regexp_values.push(arg["--regexp=".len()..].to_owned());
             }
+            _ if arg.starts_with("--kind=") => {
+                kind_values.push(arg["--kind=".len()..].to_owned());
+            }
             _ if arg.starts_with('-') => return Err(format!("unknown option: {arg}")),
             _ => files.push(PathBuf::from(arg)),
         }
@@ -445,12 +454,24 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String
     if !regexp_values.is_empty() && !matches!(format, OutputFormat::Skeleton) {
         return Err("--regexp is only supported with skeleton output".to_owned());
     }
-    if match_imports && regexp_values.is_empty() {
-        return Err("--match-imports requires --regexp".to_owned());
+    if !kind_values.is_empty() && !matches!(format, OutputFormat::Skeleton) {
+        return Err("--kind is only supported with skeleton output".to_owned());
     }
     let regexps = regexp_values
         .into_iter()
         .map(|value| parse_regexp(&value, ignore_case))
+        .collect::<Result<_, _>>()?;
+    let kinds = kind_values
+        .iter()
+        .flat_map(|value| value.split(','))
+        .map(str::trim)
+        .map(|value| {
+            if value.is_empty() {
+                Err("--kind requires a non-empty symbol kind".to_owned())
+            } else {
+                SymbolKind::from_name(value)
+            }
+        })
         .collect::<Result<_, _>>()?;
     let current_dir = env::current_dir()
         .map_err(|error| format!("failed to resolve current directory: {error}"))?;
@@ -462,8 +483,8 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String
         files,
         glob_values,
         regexps,
+        kinds,
         ignore_case,
-        match_imports,
         no_prefilter,
     }))
 }
@@ -647,7 +668,6 @@ mod tests {
         assert!(args.regexps[2].is_match("Repo1"));
         assert!(!args.regexps[0].is_match("Loader"));
         assert!(!args.ignore_case);
-        assert!(!args.match_imports);
         assert!(!args.no_prefilter);
         assert!(
             parse_args(["--no-prefilter"].into_iter().map(String::from))
@@ -672,16 +692,6 @@ mod tests {
         assert!(insensitive.ignore_case);
         assert!(insensitive.regexps[0].is_match("Load"));
 
-        let imports = parse_args(
-            ["--match-imports", "--regexp=^Service$"]
-                .into_iter()
-                .map(String::from),
-        )
-        .unwrap()
-        .unwrap();
-        assert!(imports.match_imports);
-        assert!(parse_args(["--match-imports"].into_iter().map(String::from)).is_err());
-
         assert!(parse_args(["--glob=["].into_iter().map(String::from)).is_err());
         for old_option in [
             "-f",
@@ -691,9 +701,42 @@ mod tests {
             "--language",
             "--include",
             "--exclude",
+            "--match-imports",
         ] {
             assert!(parse_args([old_option].into_iter().map(String::from)).is_err());
         }
+    }
+
+    #[test]
+    fn accepts_symbol_kinds() {
+        let args = parse_args(
+            ["-k", "fns, classes", "--kind", "types", "--kind=consts"]
+                .into_iter()
+                .map(String::from),
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(
+            args.kinds,
+            [
+                SymbolKind::Function,
+                SymbolKind::Class,
+                SymbolKind::Type,
+                SymbolKind::Constant,
+            ]
+        );
+        assert!(parse_args(["--kind"].into_iter().map(String::from)).is_err());
+        assert!(parse_args(["--kind="].into_iter().map(String::from)).is_err());
+        assert!(parse_args(["--kind=fields"].into_iter().map(String::from)).is_err());
+        assert!(
+            parse_args(
+                ["--format=json", "--kind=fns"]
+                    .into_iter()
+                    .map(String::from)
+            )
+            .is_err()
+        );
     }
 
     #[test]
