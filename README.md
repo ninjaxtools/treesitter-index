@@ -96,7 +96,8 @@ cargo release patch --no-publish --execute
 
 ## Related Work
 
-- [CoderLM: REPL to API Mapping](https://github.com/JaredStewart/coderlm/blob/main/server/REPL_to_API.md)
+- [CodeGraphContext](https://github.com/CodeGraphContext/CodeGraphContext)
+- [CoderLM](https://github.com/JaredStewart/coderlm/tree/main)
 - [Aider: Building a better repository map with tree sitter](https://aider.chat/2023/10/22/repomap.html)
 - [Maki: Token Economy](https://maki.sh/docs/token-economy/)
 
