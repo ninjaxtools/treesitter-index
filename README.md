@@ -74,7 +74,7 @@ treesitter-index --format sexp src/main.rs
 | `-t, --type <TYPE>` | Set the source language. Required for standard input and overrides extension-based detection. |
 | `--format <FORMAT>` | Select `skeleton`, `json`, or `sexp` output. Defaults to `skeleton`. |
 | `-g, --glob <GLOB>` | Include or exclude files. Prefix an exclusion with `!`; rules are applied in order. |
-| `-e, --regexp <REGEXP>` | Include matching symbols. May be repeated to match eny given regex. |
+| `-e, --regexp <REGEXP>` | Include matching symbols. May be repeated to match any given regex. |
 | `-k, --kind <KIND>` | Only include symbols of this kind: `imports`, `mod`, `consts`, `types`, `traits`, `impls`, `fns`, `classes`, `macros`, `headings`. May be repeated to match any given kind. |
 | `--no-prefilter` | Disable prefiltering with ripgrep. |
 | `-i, --ignore-case` | Make regular-expression matching case-insensitive. |
