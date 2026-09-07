@@ -96,10 +96,22 @@ cargo release patch --no-publish --execute
 
 ## Related Work
 
+Generating a code skeleton for token efficiency:
+
+- [Maki: Token Economy](https://maki.sh/docs/token-economy/)
+- [Aider: Building a better repository map with tree sitter](https://aider.chat/2023/10/22/repomap.html)
+
+Structured code queries:
+
 - [CodeGraphContext](https://github.com/CodeGraphContext/CodeGraphContext)
 - [CoderLM](https://github.com/JaredStewart/coderlm/tree/main)
-- [Aider: Building a better repository map with tree sitter](https://aider.chat/2023/10/22/repomap.html)
-- [Maki: Token Economy](https://maki.sh/docs/token-economy/)
+
+Structured code queries and edits:
+
+- [srgn](https://github.com/alexpovel/srgn)
+- [comby](https://github.com/comby-tools/comby)
+- [ast-grep](https://ast-grep.github.io/guide/introduction)
+- [gritql](https://github.com/biomejs/gritql)
 
 ## Acknowledgements
 
