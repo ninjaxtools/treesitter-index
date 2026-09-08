@@ -104,7 +104,7 @@ Generating a code skeleton for token efficiency:
 Structured code queries:
 
 - [CodeGraphContext](https://github.com/CodeGraphContext/CodeGraphContext)
-- [CoderLM](https://github.com/JaredStewart/coderlm/tree/main)
+- [CoderLM](https://github.com/JaredStewart/coderlm)
 
 Structured code queries and edits:
 
@@ -112,6 +112,14 @@ Structured code queries and edits:
 - [comby](https://github.com/comby-tools/comby)
 - [ast-grep](https://ast-grep.github.io/guide/introduction)
 - [gritql](https://github.com/biomejs/gritql)
+
+
+Semantic code search with vector embeddings:
+
+- [grepai](https://github.com/yoanbernabeu/grepai)
+- [cocoindex-code](https://github.com/cocoindex-io/cocoindex-code)
+- [codana](https://github.com/bartolli/codanna)
+- [open-codebase-index](https://github.com/Helweg/open-codebase-index)
 
 ## Acknowledgements
 
