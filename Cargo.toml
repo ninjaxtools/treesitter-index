@@ -3,8 +3,10 @@ name = "treesitter-index"
 version = "0.7.1"
 edition = "2024"
 publish = false
+description = "Generate compact source code indexes with tree-sitter"
 license = "MIT"
 repository = "https://github.com/ninjaxtools/treesitter-index"
+homepage = "https://github.com/ninjaxtools/treesitter-index"
 
 [package.metadata.dist]
 dist = true

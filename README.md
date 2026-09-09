@@ -8,7 +8,13 @@ This readme is written by a human.
 
 ## Installation
 
-You can download a binary from one of the releases: https://github.com/ninjaxtools/treesitter-index/releases
+Install from npm:
+
+```sh
+npm install -g @ninjaxtools/treesitter-index
+```
+
+You can also download a binary from one of the releases: https://github.com/ninjaxtools/treesitter-index/releases
 
 Or you can build from source:
 
@@ -88,7 +94,9 @@ Java, and Markdown (`.md` and `.markdown`).
 
 ## Releasing
 
-Release a new binary distribution on github with:
+Add an npm automation token with access to `@ninjaxtools/treesitter-index` as the
+`NPM_TOKEN` GitHub Actions secret. Release the GitHub binaries and npm package
+with:
 
 ```sh
 cargo release patch --no-publish --execute
