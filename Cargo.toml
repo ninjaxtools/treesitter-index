@@ -1,5 +1,5 @@
 [package]
-name = "kestrel-treesitter-index"
+name = "treesitter-index"
 version = "0.7.0"
 edition = "2024"
 publish = false
